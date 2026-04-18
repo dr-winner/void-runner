@@ -619,8 +619,8 @@ export class WorldScene extends Phaser.Scene {
 
   tryShoot() {
     const archetype = this.state.weaponArchetype ?? "pulse";
-    const cooldown = archetype === "pulse" ? 170 : archetype === "scatter" ? 260 : 230;
-    const baseCost = archetype === "scatter" ? 7 : archetype === "lance" ? 6 : 5;
+    const cooldown = archetype === "pulse" ? 185 : archetype === "scatter" ? 240 : 220;
+    const baseCost = archetype === "scatter" ? 6 : archetype === "lance" ? 6 : 5;
     const energyCost = Math.max(1, Math.round(baseCost * this.stageModifier.shootCostMult));
     if (this.time.now - this.lastShoot < cooldown) return;
     if (this.state.energy < energyCost) {
@@ -821,8 +821,8 @@ export class WorldScene extends Phaser.Scene {
     this.transitioning = true;
     const next = Math.min(MAX_STAGE, this.stage + 1);
     // Reward for clearing a stage.
-    this.state.hp = Math.min(this.state.maxHp, this.state.hp + Math.ceil(this.state.maxHp * 0.22));
-    this.state.energy = Math.min(this.state.maxEnergy, this.state.energy + Math.ceil(this.state.maxEnergy * 0.45));
+    this.state.hp = Math.min(this.state.maxHp, this.state.hp + Math.ceil(this.state.maxHp * 0.24));
+    this.state.energy = Math.min(this.state.maxEnergy, this.state.energy + Math.ceil(this.state.maxEnergy * 0.48));
     store.setPlayer(this.state);
     store.set({ stage: next, stageCleared: true, bossActive: null });
     this.updateObjective("stage-cleared");
