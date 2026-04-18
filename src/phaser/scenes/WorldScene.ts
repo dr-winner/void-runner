@@ -205,10 +205,28 @@ export class WorldScene extends Phaser.Scene {
     this.physics.add.collider(this.enemies, this.walls);
     // Skip enemy–enemy colliders: O(n²) Arcade checks were a major hitch with 40+ mobs.
     this.physics.add.overlap(this.player, this.pickups, this.onPickup, undefined, this);
-    this.physics.add.overlap(this.playerBullets, this.enemies, this.onBulletHitEnemy as any, undefined, this);
+    this.physics.add.overlap(
+      this.playerBullets,
+      this.enemies,
+      this.onBulletHitEnemy as any,
+      (bulletObj, _enemy) => {
+        const b = bulletObj as Phaser.Physics.Arcade.Sprite;
+        return !!(b.active && b.body && !b.getData("spent"));
+      },
+      this,
+    );
     // Do NOT collider(bullets, walls): one static body per tile → each bullet × ~O(wall bodies) per frame = freeze.
     // Wall hits are resolved in resolveBulletWallHits() after physics (tile lookup).
-    this.physics.add.overlap(this.enemyBullets, this.player, this.onEnemyBulletHit as any, undefined, this);
+    this.physics.add.overlap(
+      this.enemyBullets,
+      this.player,
+      this.onEnemyBulletHit as any,
+      (bulletObj, _player) => {
+        const b = bulletObj as Phaser.Physics.Arcade.Sprite;
+        return !!(b.active && b.body && !b.getData("spent"));
+      },
+      this,
+    );
     this.physics.add.overlap(this.player, this.enemies, this.onEnemyTouch as any, undefined, this);
 
     this.events.on(Phaser.Scenes.Events.POST_UPDATE, this.resolveBulletWallHits, this);
@@ -386,8 +404,16 @@ export class WorldScene extends Phaser.Scene {
   }
 
   onBulletHitEnemy(bullet: any, enemy: any) {
+    const b = bullet as Phaser.Physics.Arcade.Sprite;
     const e = enemy as Enemy;
-    bullet.destroy();
+    // Overlap can fire every frame while bodies touch — without this, damage & VFX stack and freeze the game.
+    if (b.getData("spent")) return;
+    b.setData("spent", true);
+    if (b.body) {
+      b.body.enable = false;
+      b.setVelocity(0, 0);
+    }
+    b.destroy();
     const dmg = this.state.attack + ri(this.rng, 0, 4);
     this.popText(e.x, e.y - 12, `${dmg}`, COLORS.neonYellow);
     if (e.takeDamage(dmg, (e.x - this.player.x) * 0.4, (e.y - this.player.y) * 0.4)) {
@@ -397,9 +423,16 @@ export class WorldScene extends Phaser.Scene {
     }
   }
 
-  onEnemyBulletHit(bullet: any) {
+  onEnemyBulletHit(bullet: any, _player: any) {
+    const b = bullet as Phaser.Physics.Arcade.Sprite;
+    if (b.getData("spent")) return;
+    b.setData("spent", true);
+    if (b.body) {
+      b.body.enable = false;
+      b.setVelocity(0, 0);
+    }
+    b.destroy();
     if (this.time.now < this.invincibleUntil) return;
-    bullet.destroy();
     this.damagePlayer(8 + ri(this.rng, 0, 4));
   }
 
