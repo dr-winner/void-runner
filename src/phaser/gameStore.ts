@@ -1,5 +1,5 @@
 import { PlayerState, createPlayerState } from "./playerState";
-import { BiomeIdx, SAVE_KEY, BIOMES } from "./constants";
+import { BiomeIdx, SAVE_KEY, BIOMES, MAX_STAGE } from "./constants";
 
 type Listener = () => void;
 
@@ -12,8 +12,9 @@ export interface GameSnapshot {
   player: PlayerState;
   biome: BiomeIdx;
   biomeName: string;
-  shipParts: number;
-  totalShipParts: 5;
+  stage: number;
+  maxStage: number;
+  stageCleared: boolean;
   kills: number;
   runTime: number;
   seed: number;
@@ -31,8 +32,9 @@ class Store {
     player: createPlayerState(),
     biome: 0,
     biomeName: BIOMES[0],
-    shipParts: 0,
-    totalShipParts: 5,
+    stage: 1,
+    maxStage: MAX_STAGE,
+    stageCleared: false,
     kills: 0,
     runTime: 0,
     seed: 0,
@@ -73,20 +75,21 @@ class Store {
     try {
       const data = {
         seed: this.state.seed,
-        biome: this.state.biome,
+        stage: this.state.stage,
         player: this.state.player,
         kills: this.state.kills,
         runTime: this.state.runTime,
-        shipParts: this.state.shipParts,
       };
       localStorage.setItem(SAVE_KEY, JSON.stringify(data));
     } catch {}
   }
-  load(): { seed: number; biome: BiomeIdx; player: PlayerState; kills: number; runTime: number; shipParts: number } | null {
+  load(): { seed: number; stage: number; player: PlayerState; kills: number; runTime: number } | null {
     try {
       const raw = localStorage.getItem(SAVE_KEY);
       if (!raw) return null;
-      return JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      if (typeof parsed?.stage !== "number") return null;
+      return parsed;
     } catch {
       return null;
     }

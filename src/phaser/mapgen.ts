@@ -1,15 +1,15 @@
-import { MAP_W, MAP_H, TILES, BiomeIdx } from "./constants";
+import { MAP_W, MAP_H, TILES, BiomeIdx, MAX_STAGE, isBossStage, isFinalStage } from "./constants";
 import { RNG, ri } from "./rng";
 
 export interface GeneratedMap {
   tiles: number[][]; // [y][x]
   biome: BiomeIdx;
+  stage: number;
   spawn: { x: number; y: number };
   pad: { x: number; y: number };
   workbench: { x: number; y: number };
-  shipParts: { x: number; y: number }[];
   enemySpawns: { x: number; y: number }[];
-  miniBoss: { x: number; y: number };
+  bossSpawn: { x: number; y: number } | null;
   lootSpots: { x: number; y: number }[];
 }
 
@@ -60,7 +60,7 @@ function floodFillLargest(grid: number[][]): Set<string> {
   return best;
 }
 
-export function generateMap(rng: RNG, biome: BiomeIdx): GeneratedMap {
+export function generateMap(rng: RNG, biome: BiomeIdx, stage: number): GeneratedMap {
   const fill = biome === 1 ? 0.46 : biome === 2 ? 0.5 : 0.42;
   const grid = carveCellular(rng, fill, 5);
   const region = floodFillLargest(grid);
@@ -92,16 +92,29 @@ export function generateMap(rng: RNG, biome: BiomeIdx): GeneratedMap {
     return open.splice(i, 1)[0];
   };
 
+  const safeStage = Math.max(1, Math.min(MAX_STAGE, stage));
+
   const spawn = take();
   const pad = take();
   tiles[pad.y][pad.x] = TILES.PAD;
   const workbench = take();
   tiles[workbench.y][workbench.x] = TILES.WORKBENCH;
 
-  const shipParts = Array.from({ length: 5 }, () => take());
-  const miniBoss = take();
-  const enemySpawns = Array.from({ length: 18 + biome * 4 }, () => take());
-  const lootSpots = Array.from({ length: 14 }, () => take());
+  const bossStage = isBossStage(safeStage);
+  const bossSpawn = bossStage ? take() : null;
 
-  return { tiles, biome, spawn, pad, workbench, shipParts, enemySpawns, miniBoss, lootSpots };
+  // Scale enemy count with stage (more enemies on later stages).
+  const baseCount = 12;
+  const scaledCount = baseCount + Math.floor(safeStage * 0.9) + biome * 2;
+  const enemyCount = Math.min(open.length, scaledCount);
+  const enemySpawns = Array.from({ length: enemyCount }, () => take()).filter(Boolean) as { x: number; y: number }[];
+
+  // Scale loot slightly with stage, but cap it.
+  const lootCount = Math.min(open.length, 12 + Math.floor(safeStage / 6));
+  const lootSpots = Array.from({ length: lootCount }, () => take()).filter(Boolean) as { x: number; y: number }[];
+
+  // Silence unused warning in some configs.
+  void isFinalStage;
+
+  return { tiles, biome, stage: safeStage, spawn, pad, workbench, enemySpawns, bossSpawn, lootSpots };
 }

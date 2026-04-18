@@ -4,10 +4,39 @@ export const TILE = 32;
 export const MAP_W = 80;
 export const MAP_H = 60;
 
-export const SAVE_KEY = "voidrunner_save_v2";
+export const SAVE_KEY = "voidrunner_save_v3";
 
 export const BIOMES = ["CRASHED ZONE", "ALIEN JUNGLE", "UNDERGROUND RUINS"] as const;
 export type BiomeIdx = 0 | 1 | 2;
+
+export const MAX_STAGE = 100;
+export const BOSS_STAGE_INTERVAL = 10;
+
+export function biomeForStage(stage: number): BiomeIdx {
+  const s = Math.max(1, Math.min(MAX_STAGE, stage));
+  if (s <= 33) return 0;
+  if (s <= 66) return 1;
+  return 2;
+}
+
+export function isBossStage(stage: number): boolean {
+  return stage % BOSS_STAGE_INTERVAL === 0 || stage === MAX_STAGE;
+}
+
+export function isFinalStage(stage: number): boolean {
+  return stage >= MAX_STAGE;
+}
+
+// Per-stage scaling multipliers applied to enemy presets.
+export function enemyScaleForStage(stage: number) {
+  const s = Math.max(1, stage);
+  return {
+    hp: 1 + (s - 1) * 0.09,
+    damage: 1 + (s - 1) * 0.055,
+    speed: Math.min(1.8, 1 + (s - 1) * 0.008),
+    xp: 1 + (s - 1) * 0.07,
+  };
+}
 
 // Tailwind-tokenized neon palette mirrored as hex for Phaser
 export const COLORS = {

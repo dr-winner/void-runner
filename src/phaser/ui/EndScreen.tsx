@@ -1,6 +1,5 @@
 import { Button } from "@/components/ui/button";
 import { useGameStore } from "@/phaser/useGameStore";
-import { store } from "@/phaser/gameStore";
 import { sfx } from "@/phaser/audio";
 import { Skull, Trophy, RotateCcw } from "lucide-react";
 
@@ -28,7 +27,7 @@ export const EndScreen = ({ onRestart }: { onRestart: () => void }) => {
         <div className="grid grid-cols-2 gap-3 text-left text-xs pt-2">
           <Stat label="LEVEL" value={s.player.level} />
           <Stat label="KILLS" value={s.kills} />
-          <Stat label="PARTS" value={`${s.shipParts}/5`} />
+          <Stat label="STAGE" value={`${s.stage}/${s.maxStage}`} />
           <Stat label="TIME" value={`${mm}:${ss}`} />
         </div>
         <Button className="w-full mt-2" onClick={() => { sfx.uiClick(); onRestart(); }}>
