@@ -92,7 +92,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.hpBar.fillStyle(0x000000, 0.7);
     this.hpBar.fillRect(x - 1, -1, w + 2, h + 2);
     this.hpBar.fillStyle(0x331111, 1);
-    this.hpBar.fillRect(x, 0, w, h);
+    this.hpBar.fillRect(x, y, w, h);
     this.hpBar.fillStyle(this.stats.isBoss ? 0xff3355 : 0xff7755, 1);
     this.hpBar.fillRect(x, 0, w * pct, h);
   }
