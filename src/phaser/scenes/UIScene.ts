@@ -61,6 +61,19 @@ export class UIScene extends Phaser.Scene {
         g.fillStyle(color, 1);
         g.fillRect(xx * TILE * sx, yy * TILE * sy, tileW, tileH);
       }
+    } else {
+      for (let yy = 0; yy < MAP_H; yy++) {
+        for (let xx = 0; xx < MAP_W; xx++) {
+          if (!world.visited[yy][xx]) continue;
+          const t = world.map.tiles[yy][xx];
+          let color = p.floor;
+          if (t === 1) color = p.wall;
+          else if (t === 6) color = 0x33d9ff;
+          else if (t === 7) color = 0xffd633;
+          g.fillStyle(color, 1);
+          g.fillRect(xx * TILE * sx, yy * TILE * sy, Math.max(1, TILE * sx), Math.max(1, TILE * sy));
+        }
+      }
     }
     world.enemies.getChildren().forEach((c: any) => {
       const vy = Math.floor(c.y / TILE);

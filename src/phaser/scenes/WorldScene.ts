@@ -70,8 +70,16 @@ export class WorldScene extends Phaser.Scene {
   playerBullets!: Phaser.Physics.Arcade.Group;
   enemyBullets!: Phaser.Physics.Arcade.Group;
   fogTexture!: Phaser.GameObjects.RenderTexture;
-  fogMask!: Phaser.GameObjects.Graphics;
+  /** Accumulated revealed tiles — avoids scanning MAP_W×MAP_H every fog rebuild. */
+  fogVisitedG!: Phaser.GameObjects.Graphics;
+  fogCircle!: Phaser.GameObjects.Graphics;
   visited!: boolean[][];
+  /** For minimap: only cells revealed at least once (grows, max ~MAP_W*MAP_H). */
+  visitedList: { x: number; y: number }[] = [];
+  padLocked = false;
+  bossCleared = false;
+  transitioning = false;
+  padGlow!: Phaser.GameObjects.Arc;
   lastMelee = 0;
   lastShoot = 0;
   invincibleUntil = 0;
@@ -91,9 +99,18 @@ export class WorldScene extends Phaser.Scene {
   private fogPendingRebuild = false;
   private lastFogRebuildAt = 0;
   private lastPlayerStoreSync = 0;
+  /** Reused for getWorldPoint to avoid allocations. */
+  private readonly _aimWorld = new Phaser.Math.Vector2();
 
   constructor() {
     super("World");
+  }
+
+  /** Aim toward cursor in world space (Scale.FIT + DOM overlays break positionToCamera reliably). */
+  private aimAngle(): number {
+    const pointer = this.input.activePointer;
+    this.cameras.main.getWorldPoint(pointer.x, pointer.y, this._aimWorld);
+    return Math.atan2(this._aimWorld.y - this.player.y, this._aimWorld.x - this.player.x);
   }
 
   create() {
@@ -186,19 +203,22 @@ export class WorldScene extends Phaser.Scene {
     // Colliders
     this.physics.add.collider(this.player, this.walls);
     this.physics.add.collider(this.enemies, this.walls);
-    this.physics.add.collider(this.enemies, this.enemies);
+    // Skip enemy–enemy colliders: O(n²) Arcade checks were a major hitch with 40+ mobs.
     this.physics.add.overlap(this.player, this.pickups, this.onPickup, undefined, this);
     this.physics.add.overlap(this.playerBullets, this.enemies, this.onBulletHitEnemy as any, undefined, this);
-    this.physics.add.collider(this.playerBullets, this.walls, (b: any) => b.destroy());
+    // Do NOT collider(bullets, walls): one static body per tile → each bullet × ~O(wall bodies) per frame = freeze.
+    // Wall hits are resolved in resolveBulletWallHits() after physics (tile lookup).
     this.physics.add.overlap(this.enemyBullets, this.player, this.onEnemyBulletHit as any, undefined, this);
-    this.physics.add.collider(this.enemyBullets, this.walls, (b: any) => b.destroy());
     this.physics.add.overlap(this.player, this.enemies, this.onEnemyTouch as any, undefined, this);
+
+    this.events.on(Phaser.Scenes.Events.POST_UPDATE, this.resolveBulletWallHits, this);
 
     // Fog of war
     this.visited = Array.from({ length: MAP_H }, () => Array(MAP_W).fill(false));
     this.fogTexture = this.add.renderTexture(0, 0, MAP_W * TILE, MAP_H * TILE).setDepth(50).setOrigin(0, 0);
     this.fogTexture.fill(0x000000, 0.95);
-    this.fogMask = this.make.graphics({ x: 0, y: 0 }, false);
+    this.fogVisitedG = this.make.graphics({ x: 0, y: 0 }, false);
+    this.fogCircle = this.make.graphics({ x: 0, y: 0 }, false);
 
     // Input
     this.cursors = this.input.keyboard!.createCursorKeys();
@@ -217,6 +237,7 @@ export class WorldScene extends Phaser.Scene {
     this.time.addEvent({ delay: 5000, loop: true, callback: () => store.save() });
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.events.off(Phaser.Scenes.Events.POST_UPDATE, this.resolveBulletWallHits, this);
       stopAmbient();
     });
 
@@ -344,6 +365,26 @@ export class WorldScene extends Phaser.Scene {
     return `STAGE ${this.stage} WARDEN`;
   }
 
+  /** After physics: destroy bullets that entered a solid tile (O(bullets), not O(bullets × walls)). */
+  private resolveBulletWallHits() {
+    if (store.state.paused || store.state.scene !== "playing") return;
+    const hitWall = (b: Phaser.GameObjects.GameObject) => {
+      const s = b as Phaser.Physics.Arcade.Sprite;
+      if (!s.active || !s.body) return;
+      const tx = Math.floor(s.x / TILE);
+      const ty = Math.floor(s.y / TILE);
+      if (tx < 0 || ty < 0 || tx >= MAP_W || ty >= MAP_H) {
+        s.destroy();
+        return;
+      }
+      if (SOLID.has(this.map.tiles[ty][tx])) s.destroy();
+    };
+    const pb = this.playerBullets.getChildren();
+    for (let i = pb.length - 1; i >= 0; i--) hitWall(pb[i]);
+    const eb = this.enemyBullets.getChildren();
+    for (let i = eb.length - 1; i >= 0; i--) hitWall(eb[i]);
+  }
+
   onBulletHitEnemy(bullet: any, enemy: any) {
     const e = enemy as Enemy;
     bullet.destroy();
@@ -448,7 +489,7 @@ export class WorldScene extends Phaser.Scene {
     if (this.time.now - this.lastMelee < 280) return;
     this.lastMelee = this.time.now;
     sfx.shoot();
-    const ang = this.player.rotation;
+    const ang = this.aimAngle();
     const reach = 38;
     const tx = this.player.x + Math.cos(ang) * reach;
     const ty = this.player.y + Math.sin(ang) * reach;
@@ -476,7 +517,7 @@ export class WorldScene extends Phaser.Scene {
     this.state.energy -= 5;
     store.setPlayer(this.state);
     sfx.shoot();
-    const ang = this.player.rotation;
+    const ang = this.aimAngle();
     const speed = 460;
     const b = this.playerBullets.create(this.player.x + Math.cos(ang) * 14, this.player.y + Math.sin(ang) * 14, "bullet_player") as Phaser.Physics.Arcade.Sprite;
     b.setDepth(8);
@@ -518,7 +559,10 @@ export class WorldScene extends Phaser.Scene {
         if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) continue;
         if (!this.visited[y][x]) {
           this.visited[y][x] = true;
+          this.visitedList.push({ x, y });
           dirty = true;
+          this.fogVisitedG.fillStyle(0xffffff, 1);
+          this.fogVisitedG.fillRect(x * TILE, y * TILE, TILE, TILE);
         }
       }
     }
@@ -531,15 +575,11 @@ export class WorldScene extends Phaser.Scene {
 
     this.fogTexture.clear();
     this.fogTexture.fill(0x000000, 0.92);
-    this.fogMask.clear();
-    this.fogMask.fillStyle(0x000000, 1);
-    for (let y = 0; y < MAP_H; y++) {
-      for (let x = 0; x < MAP_W; x++) {
-        if (this.visited[y][x]) this.fogMask.fillRect(x * TILE, y * TILE, TILE, TILE);
-      }
-    }
-    this.fogMask.fillCircle(this.player.x, this.player.y, FOG_RADIUS * TILE * 0.95);
-    this.fogTexture.erase(this.fogMask);
+    this.fogTexture.erase(this.fogVisitedG);
+    this.fogCircle.clear();
+    this.fogCircle.fillStyle(0xffffff, 1);
+    this.fogCircle.fillCircle(this.player.x, this.player.y, FOG_RADIUS * TILE * 0.95);
+    this.fogTexture.erase(this.fogCircle);
   }
 
   update(time: number, _delta: number) {
@@ -557,10 +597,8 @@ export class WorldScene extends Phaser.Scene {
     const len = Math.hypot(vx, vy) || 1;
     this.player.body.setVelocity((vx / len) * this.state.speed, (vy / len) * this.state.speed);
 
-    // face mouse
-    const p = this.input.activePointer;
-    const wp = p.positionToCamera(this.cameras.main) as Phaser.Math.Vector2;
-    this.player.rotation = Math.atan2(wp.y - this.player.y, wp.x - this.player.x);
+    // face mouse (same math as bullets / melee)
+    this.player.rotation = this.aimAngle();
 
     // hotkeys
     if (Phaser.Input.Keyboard.JustDown(k.SPACE)) this.tryMelee();
@@ -587,7 +625,7 @@ export class WorldScene extends Phaser.Scene {
     });
     const boss = this.enemies.getChildren().find((c) => (c as Enemy).stats.isBoss) as Enemy | undefined;
     if (boss) {
-      const name = boss.stats.kind === "guardian" ? "GUARDIAN" : "BIOME WARDEN";
+      const name = this.bossBarName(boss);
       const key = `${name}:${boss.stats.hp}`;
       if (key !== this.lastBossHudKey) {
         this.lastBossHudKey = key;
