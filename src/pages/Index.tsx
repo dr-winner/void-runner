@@ -31,6 +31,10 @@ const VoidRunner = () => {
         stage: 1,
         stageCleared: false,
         bossActive: null,
+        objective: "Find and activate the portal.",
+        stageModifierLabel: null,
+        debugOverlay: false,
+        debugStats: null,
         seed: Math.floor(Math.random() * 1e9),
       });
     }
@@ -48,7 +52,17 @@ const VoidRunner = () => {
     store.clearSave();
     setHasSave(false);
     setShowMenu(true);
-    store.set({ scene: "menu", paused: false, inventoryOpen: false, craftingOpen: false, settingsOpen: false });
+    store.set({
+      scene: "menu",
+      paused: false,
+      inventoryOpen: false,
+      craftingOpen: false,
+      settingsOpen: false,
+      objective: "Find and activate the portal.",
+      stageModifierLabel: null,
+      debugOverlay: false,
+      debugStats: null,
+    });
     if (gameRef.current) {
       gameRef.current.destroy(true);
       gameRef.current = null;
@@ -95,6 +109,7 @@ const VoidRunner = () => {
             <span><kbd className="rounded border border-border/60 bg-background/80 px-1.5 py-0.5">I</kbd> inventory</span>
             <span><kbd className="rounded border border-border/60 bg-background/80 px-1.5 py-0.5">E</kbd> interact</span>
             <span><kbd className="rounded border border-border/60 bg-background/80 px-1.5 py-0.5">C</kbd> stats</span>
+            <span><kbd className="rounded border border-border/60 bg-background/80 px-1.5 py-0.5">P</kbd> debug</span>
             <span><kbd className="rounded border border-border/60 bg-background/80 px-1.5 py-0.5">Esc</kbd> pause</span>
             <span><kbd className="rounded border border-border/60 bg-background/80 px-1">1</kbd>–<kbd className="rounded border border-border/60 bg-background/80 px-1">0</kbd> hotbar</span>
           </div>

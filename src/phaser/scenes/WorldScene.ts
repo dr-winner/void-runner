@@ -14,6 +14,9 @@ import {
   biomeForStage,
   isBossStage,
   isFinalStage,
+  stageModifiersForStage,
+  StageModifier,
+  WeaponArchetype,
 } from "../constants";
 import { mulberry32, ri, pick, RNG } from "../rng";
 import { generateMap, GeneratedMap } from "../mapgen";
@@ -28,7 +31,9 @@ const LOOT_TABLE: Item[] = [
   { id: "p1", name: "Plasma Cell", type: "consumable_en", value: 25 },
   { id: "p2", name: "Med Pack", type: "consumable_hp", value: 35 },
   { id: "p3", name: "Stim", type: "consumable_hp", value: 18 },
-  { id: "p4", name: "Pulse Blade", type: "weapon", value: 3, tier: 1 },
+  { id: "p4", name: "Pulse Carbine Mk1", type: "weapon", value: 3, tier: 1, weaponArchetype: "pulse" },
+  { id: "p8", name: "Scatter Array Mk1", type: "weapon", value: 3, tier: 1, weaponArchetype: "scatter" },
+  { id: "p9", name: "Lance Driver Mk1", type: "weapon", value: 3, tier: 1, weaponArchetype: "lance" },
   { id: "p5", name: "Nano Plate", type: "armor", value: 2, tier: 1 },
   { id: "p6", name: "Scrap", type: "scrap", value: 1 },
   { id: "p7", name: "Scrap", type: "scrap", value: 1 },
@@ -41,10 +46,10 @@ interface PickupSprite extends Phaser.Physics.Arcade.Sprite {
 // Weighted enemy kinds by stage: early stages lean crawler, late stages lean brute/spitter.
 function pickEnemyKind(rng: RNG, stage: number): EnemyKind {
   const t = Math.min(1, Math.max(0, (stage - 1) / (MAX_STAGE - 1)));
-  const wCrawler = Math.max(0.08, 0.55 - t * 0.4);
-  const wDrone = 0.2 + t * 0.08;
-  const wSpitter = 0.18 + t * 0.17;
-  const wBrute = Math.max(0.07, 0.07 + t * 0.4);
+  const wCrawler = Math.max(0.06, 0.58 - t * 0.5);
+  const wDrone = 0.22 + t * 0.1;
+  const wSpitter = 0.14 + t * 0.22;
+  const wBrute = Math.max(0.06, 0.06 + t * 0.42);
   const total = wCrawler + wDrone + wSpitter + wBrute;
   const r = rng() * total;
   let acc = wCrawler;
@@ -90,11 +95,15 @@ export class WorldScene extends Phaser.Scene {
   padPos = { x: 0, y: 0 };
   partGroup!: Phaser.Physics.Arcade.Group;
   shakeUntil = 0;
+  stageModifier!: StageModifier;
+  private pointerDownHandler?: (p: Phaser.Input.Pointer) => void;
   private lastRunTimeEmitted = -1;
   private lastBossHudKey = "";
   private fogPendingRebuild = false;
   private lastFogRebuildAt = 0;
   private lastPlayerStoreSync = 0;
+  private lastDebugStoreSync = 0;
+  private lastFrameAt = 0;
   /** Reused for getWorldPoint to avoid allocations. */
   private readonly _aimWorld = new Phaser.Math.Vector2();
 
@@ -109,6 +118,36 @@ export class WorldScene extends Phaser.Scene {
     return Math.atan2(this._aimWorld.y - this.player.y, this._aimWorld.x - this.player.x);
   }
 
+  private weaponArchetypeLabel(kind: WeaponArchetype) {
+    if (kind === "scatter") return "Scatter Array";
+    if (kind === "lance") return "Lance Driver";
+    return "Pulse Carbine";
+  }
+
+  private updateObjective(reason: "spawn" | "boss-live" | "boss-cleared" | "stage-cleared" = "spawn") {
+    let objective = "Eliminate hostiles and find the portal.";
+    if (this.padLocked) {
+      objective = isFinalStage(this.stage) ? "Defeat the Guardian." : "Defeat the Warden to unlock the portal.";
+    } else if (isFinalStage(this.stage) && this.bossCleared) {
+      objective = "Portal stabilized. Step on the pad to finish the run.";
+    } else if (store.state.stageCleared || reason === "stage-cleared") {
+      objective = "Stage secured. Enter the portal.";
+    } else {
+      objective = "Portal unlocked. Enter when ready.";
+    }
+    store.setIfChanged({ objective });
+  }
+
+  private randomOpenTile(): { x: number; y: number } | null {
+    for (let i = 0; i < 140; i++) {
+      const x = ri(this.rng, 1, MAP_W - 2);
+      const y = ri(this.rng, 1, MAP_H - 2);
+      const t = this.map.tiles[y][x];
+      if (t === TILES.FLOOR || t === TILES.WATER) return { x, y };
+    }
+    return null;
+  }
+
   create() {
     const save = store.load();
     // Seed each stage deterministically from the run seed + stage so each level is unique.
@@ -119,6 +158,7 @@ export class WorldScene extends Phaser.Scene {
     this.rng = mulberry32(stageSeed);
     this.biome = biome;
     this.stage = stage;
+    this.stageModifier = stageModifiersForStage(stage);
     this.map = generateMap(this.rng, biome, stage);
 
     this.physics.world.setBounds(0, 0, MAP_W * TILE, MAP_H * TILE);
@@ -144,6 +184,9 @@ export class WorldScene extends Phaser.Scene {
       runTime: save?.runTime ?? store.state.runTime ?? 0,
       scene: "playing",
       bossActive: null,
+      objective: "Eliminate hostiles and find the portal.",
+      stageModifierLabel: this.stageModifier.id === "none" ? null : this.stageModifier.label,
+      debugStats: null,
     });
     store.setPlayer(this.state);
 
@@ -170,6 +213,20 @@ export class WorldScene extends Phaser.Scene {
       const kind = pickEnemyKind(this.rng, stage);
       this.spawnEnemy(p.x * TILE + TILE / 2, p.y * TILE + TILE / 2, kind);
     });
+    if (this.stageModifier.enemyCountBonus > 0) {
+      for (let i = 0; i < this.stageModifier.enemyCountBonus; i++) {
+        const tile = this.randomOpenTile();
+        if (!tile) break;
+        const kind = pickEnemyKind(this.rng, stage);
+        this.spawnEnemy(tile.x * TILE + TILE / 2, tile.y * TILE + TILE / 2, kind);
+      }
+    } else if (this.stageModifier.enemyCountBonus < 0) {
+      const trim = Math.min(this.enemies.getLength(), Math.abs(this.stageModifier.enemyCountBonus));
+      const children = this.enemies.getChildren() as Enemy[];
+      for (let i = 0; i < trim; i++) {
+        children[i]?.destroy();
+      }
+    }
 
     // Boss on boss-stages: guardian on the final stage, miniboss every 10.
     if (this.map.bossSpawn) {
@@ -184,6 +241,7 @@ export class WorldScene extends Phaser.Scene {
           : `⚠ Stage ${stage} — Warden blocks the portal!`,
         "bad",
       );
+      this.updateObjective("boss-live");
     }
 
     // Loot
@@ -238,11 +296,12 @@ export class WorldScene extends Phaser.Scene {
     this.cursors = this.input.keyboard!.createCursorKeys();
     this.keys = this.input.keyboard!.addKeys("W,A,S,D,SPACE,F,E,I,C,P,ESC,ONE,TWO,THREE,FOUR,FIVE,SIX,SEVEN,EIGHT,NINE,ZERO") as any;
     this.input.mouse?.disableContextMenu();
-    this.input.on("pointerdown", (p: Phaser.Input.Pointer) => {
+    this.pointerDownHandler = (p: Phaser.Input.Pointer) => {
       if (store.state.paused || store.state.scene !== "playing") return;
       if (p.leftButtonDown()) this.tryMelee();
       if (p.rightButtonDown()) this.tryShoot();
-    });
+    };
+    this.input.on("pointerdown", this.pointerDownHandler);
 
     this.startTime = this.time.now - (save?.runTime ?? 0) * 1000;
     startAmbient(biome);
@@ -252,11 +311,13 @@ export class WorldScene extends Phaser.Scene {
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.events.off(Phaser.Scenes.Events.POST_UPDATE, this.resolveBulletWallHits, this);
+      if (this.pointerDownHandler) this.input.off("pointerdown", this.pointerDownHandler);
       stopAmbient();
     });
 
     // Screen reveal initial fog
     this.updateFog();
+    this.updateObjective("spawn");
   }
 
   drawTerrain() {
@@ -323,6 +384,9 @@ export class WorldScene extends Phaser.Scene {
 
   spawnEnemy(x: number, y: number, kind: EnemyKind) {
     const e = new Enemy(this, x, y, kind, this.stage);
+    if (this.stageModifier.enemySpeedMult !== 1) {
+      e.stats.speed *= this.stageModifier.enemySpeedMult;
+    }
     this.enemies.add(e);
     return e;
   }
@@ -410,7 +474,9 @@ export class WorldScene extends Phaser.Scene {
       b.setVelocity(0, 0);
     }
     b.destroy();
-    const dmg = this.state.attack + ri(this.rng, 0, 4);
+    const archetype = this.state.weaponArchetype ?? "pulse";
+    const lanceBonus = archetype === "lance" ? 1.22 : 1;
+    const dmg = Math.ceil((this.state.attack + ri(this.rng, 0, 4)) * lanceBonus);
     this.popText(e.x, e.y - 12, `${dmg}`, COLORS.neonYellow);
     if (e.takeDamage(dmg, (e.x - this.player.x) * 0.4, (e.y - this.player.y) * 0.4)) {
       this.killEnemy(e);
@@ -440,7 +506,8 @@ export class WorldScene extends Phaser.Scene {
   }
 
   damagePlayer(raw: number) {
-    const dmg = Math.max(1, raw - this.state.defense);
+    const scaledRaw = Math.ceil(raw * this.stageModifier.incomingDamageMult);
+    const dmg = Math.max(1, scaledRaw - this.state.defense);
     this.state.hp = Math.max(0, this.state.hp - dmg);
     this.invincibleUntil = this.time.now + 400;
     this.cameras.main.shake(160, 0.012);
@@ -470,12 +537,22 @@ export class WorldScene extends Phaser.Scene {
       this.cameras.main.shake(400, 0.02);
       // Guaranteed loot — tier scales with stage.
       const tier = Math.max(1, Math.ceil(this.stage / 20));
-      this.spawnPickup(e.x, e.y, { id: "drop", name: `Pulse Blade Mk${tier}`, type: "weapon", value: 3 + tier * 2, tier });
+      const archetypes: WeaponArchetype[] = ["pulse", "scatter", "lance"];
+      const weaponArchetype = archetypes[(this.stage + tier) % archetypes.length];
+      this.spawnPickup(e.x, e.y, {
+        id: "drop",
+        name: `${this.weaponArchetypeLabel(weaponArchetype)} Mk${tier}`,
+        type: "weapon",
+        value: 3 + tier * 2,
+        tier,
+        weaponArchetype,
+      });
       this.spawnPickup(e.x + 12, e.y, { id: "drop", name: "Med Pack+", type: "consumable_hp", value: 40 + tier * 10 });
       store.set({ bossActive: null });
       this.padLocked = false;
       this.bossCleared = true;
       this.updatePadGlow();
+      this.updateObjective("boss-cleared");
       if (!wasGuardian) {
         store.toast("Portal unlocked — step on the pad to advance.", "good");
       }
@@ -519,40 +596,54 @@ export class WorldScene extends Phaser.Scene {
     this.lastMelee = this.time.now;
     sfx.shoot();
     const ang = this.aimAngle();
-    const reach = 38;
-    const tx = this.player.x + Math.cos(ang) * reach;
-    const ty = this.player.y + Math.sin(ang) * reach;
+    const archetype = this.state.weaponArchetype ?? "pulse";
+    const meleeReach = archetype === "lance" ? 52 : archetype === "scatter" ? 34 : 38;
+    const meleeRadius = archetype === "lance" ? 30 : archetype === "scatter" ? 22 : 26;
+    const meleeBonus = archetype === "lance" ? 1.14 : archetype === "scatter" ? 0.92 : 1;
+    const tx = this.player.x + Math.cos(ang) * meleeReach;
+    const ty = this.player.y + Math.sin(ang) * meleeReach;
     // arc visual
     const arc = this.add.circle(tx, ty, 22, COLORS.neonBlue, 0.35).setDepth(11);
     this.tweens.add({ targets: arc, alpha: 0, scale: 1.4, duration: 200, onComplete: () => arc.destroy() });
-    this.enemies.getChildren().forEach((c) => {
-      const e = c as Enemy;
-      if (Phaser.Math.Distance.Between(e.x, e.y, tx, ty) < 26) {
-        const dmg = this.state.attack + ri(this.rng, 1, 5);
+    const enemies = this.enemies.getChildren() as Enemy[];
+    for (let i = 0; i < enemies.length; i++) {
+      const e = enemies[i];
+      if (Phaser.Math.Distance.Between(e.x, e.y, tx, ty) < meleeRadius) {
+        const dmg = Math.ceil((this.state.attack + ri(this.rng, 1, 5)) * meleeBonus);
         this.popText(e.x, e.y - 10, `${dmg}`, COLORS.neonBlue);
         if (e.takeDamage(dmg, (e.x - this.player.x) * 0.6, (e.y - this.player.y) * 0.6)) this.killEnemy(e);
         else if (e.stats.isBoss) store.set({ bossActive: { name: this.bossBarName(e), hp: e.stats.hp, maxHp: e.stats.maxHp } });
       }
-    });
+    }
   }
 
   tryShoot() {
-    if (this.time.now - this.lastShoot < 220) return;
-    if (this.state.energy < 5) {
+    const archetype = this.state.weaponArchetype ?? "pulse";
+    const cooldown = archetype === "pulse" ? 170 : archetype === "scatter" ? 260 : 230;
+    const baseCost = archetype === "scatter" ? 7 : archetype === "lance" ? 6 : 5;
+    const energyCost = Math.max(1, Math.round(baseCost * this.stageModifier.shootCostMult));
+    if (this.time.now - this.lastShoot < cooldown) return;
+    if (this.state.energy < energyCost) {
       store.toast("Out of energy", "bad");
       return;
     }
     this.lastShoot = this.time.now;
-    this.state.energy -= 5;
+    this.state.energy -= energyCost;
     store.setPlayer(this.state);
     sfx.shoot();
     const ang = this.aimAngle();
-    const speed = 460;
-    const b = this.playerBullets.create(this.player.x + Math.cos(ang) * 14, this.player.y + Math.sin(ang) * 14, "bullet_player") as Phaser.Physics.Arcade.Sprite;
-    b.setDepth(8);
-    (b.body as Phaser.Physics.Arcade.Body).setCircle(5, 1, 1);
-    b.setVelocity(Math.cos(ang) * speed, Math.sin(ang) * speed);
-    this.time.delayedCall(1100, () => b.destroy());
+    const speed = archetype === "lance" ? 540 : 460;
+    const spread = archetype === "scatter" ? [-0.22, 0, 0.22] : [0];
+    const life = archetype === "lance" ? 900 : 1100;
+    for (let i = 0; i < spread.length; i++) {
+      const a = ang + spread[i];
+      const b = this.playerBullets.create(this.player.x + Math.cos(a) * 14, this.player.y + Math.sin(a) * 14, "bullet_player") as Phaser.Physics.Arcade.Sprite;
+      b.setDepth(8);
+      const radius = archetype === "lance" ? 4 : 5;
+      (b.body as Phaser.Physics.Arcade.Body).setCircle(radius, 1, 1);
+      b.setVelocity(Math.cos(a) * speed, Math.sin(a) * speed);
+      this.time.delayedCall(life, () => b.destroy());
+    }
   }
 
   enemyShoot(e: Enemy) {
@@ -566,14 +657,15 @@ export class WorldScene extends Phaser.Scene {
     this.time.delayedCall(1500, () => b.destroy());
     // boss spread
     if (e.stats.isBoss) {
-      [-0.25, 0.25].forEach((off) => {
-        const a2 = ang + off;
+      const spread = [-0.25, 0.25];
+      for (let i = 0; i < spread.length; i++) {
+        const a2 = ang + spread[i];
         const b2 = this.enemyBullets.create(e.x, e.y, "bullet_enemy") as Phaser.Physics.Arcade.Sprite;
         b2.setDepth(8);
         (b2.body as Phaser.Physics.Arcade.Body).setCircle(5, 1, 1);
         b2.setVelocity(Math.cos(a2) * speed, Math.sin(a2) * speed);
         this.time.delayedCall(1500, () => b2.destroy());
-      });
+      }
     }
   }
 
@@ -635,24 +727,31 @@ export class WorldScene extends Phaser.Scene {
     if (Phaser.Input.Keyboard.JustDown(k.I)) store.set({ inventoryOpen: !store.state.inventoryOpen, paused: !store.state.inventoryOpen });
     if (Phaser.Input.Keyboard.JustDown(k.ESC)) store.set({ paused: !store.state.paused, settingsOpen: !store.state.paused });
     if (Phaser.Input.Keyboard.JustDown(k.E)) this.tryInteract();
+    if (Phaser.Input.Keyboard.JustDown(k.P)) {
+      store.set({ debugOverlay: !store.state.debugOverlay });
+    }
     // hotbar
     const hotKeys = ["ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN", "EIGHT", "NINE", "ZERO"];
-    hotKeys.forEach((kk, i) => {
-      if (Phaser.Input.Keyboard.JustDown(k[kk])) this.useHotbar(i);
-    });
+    for (let i = 0; i < hotKeys.length; i++) {
+      if (Phaser.Input.Keyboard.JustDown(k[hotKeys[i]])) this.useHotbar(i);
+    }
 
     // energy regen
-    this.state.energy = Math.min(this.state.maxEnergy, this.state.energy + 0.04);
+    const regen = 0.04 * this.stageModifier.energyRegenMult;
+    this.state.energy = Math.min(this.state.maxEnergy, this.state.energy + regen);
     if (time - this.lastPlayerStoreSync > 200) {
       this.lastPlayerStoreSync = time;
       store.setPlayer(this.state);
     }
 
     // enemy AI (avoid store.emit every frame for boss HUD — React was re-rendering ~60×/s)
-    this.enemies.getChildren().forEach((c) => {
-      (c as Enemy).tickAI(time, this.player, (en) => this.enemyShoot(en));
-    });
-    const boss = this.enemies.getChildren().find((c) => (c as Enemy).stats.isBoss) as Enemy | undefined;
+    const enemies = this.enemies.getChildren() as Enemy[];
+    let boss: Enemy | undefined;
+    for (let i = 0; i < enemies.length; i++) {
+      const e = enemies[i];
+      e.tickAI(time, this.player, (en) => this.enemyShoot(en));
+      if (!boss && e.stats.isBoss) boss = e;
+    }
     if (boss) {
       const name = this.bossBarName(boss);
       const key = `${name}:${boss.stats.hp}`;
@@ -671,6 +770,22 @@ export class WorldScene extends Phaser.Scene {
     if (runSec !== this.lastRunTimeEmitted) {
       this.lastRunTimeEmitted = runSec;
       store.set({ runTime: runSec });
+    }
+    if (time - this.lastDebugStoreSync > 350) {
+      this.lastDebugStoreSync = time;
+      const frameMs = this.lastFrameAt > 0 ? time - this.lastFrameAt : 16.67;
+      const fps = frameMs > 0 ? 1000 / frameMs : 0;
+      this.lastFrameAt = time;
+      store.setIfChanged({
+        debugStats: {
+          fps: Math.round(fps * 10) / 10,
+          frameMs: Math.round(frameMs * 10) / 10,
+          enemies: enemies.length,
+          bullets: this.playerBullets.getLength() + this.enemyBullets.getLength(),
+        },
+      });
+    } else {
+      this.lastFrameAt = time;
     }
   }
 
@@ -692,6 +807,7 @@ export class WorldScene extends Phaser.Scene {
         isFinalStage(this.stage) ? "Defeat the Guardian first!" : "Defeat the Warden to unlock the portal!",
         "bad",
       );
+      this.updateObjective("boss-live");
       return;
     }
     if (isFinalStage(this.stage) && this.bossCleared) {
@@ -705,10 +821,11 @@ export class WorldScene extends Phaser.Scene {
     this.transitioning = true;
     const next = Math.min(MAX_STAGE, this.stage + 1);
     // Reward for clearing a stage.
-    this.state.hp = Math.min(this.state.maxHp, this.state.hp + Math.ceil(this.state.maxHp * 0.25));
-    this.state.energy = Math.min(this.state.maxEnergy, this.state.energy + Math.ceil(this.state.maxEnergy * 0.5));
+    this.state.hp = Math.min(this.state.maxHp, this.state.hp + Math.ceil(this.state.maxHp * 0.22));
+    this.state.energy = Math.min(this.state.maxEnergy, this.state.energy + Math.ceil(this.state.maxEnergy * 0.45));
     store.setPlayer(this.state);
     store.set({ stage: next, stageCleared: true, bossActive: null });
+    this.updateObjective("stage-cleared");
     store.save();
     sfx.victory();
     store.toast(`Stage ${this.stage} cleared → entering Stage ${next}`, "good");
@@ -733,12 +850,12 @@ export class WorldScene extends Phaser.Scene {
 
   gameOver() {
     sfx.die();
-    store.set({ scene: "gameover", paused: true });
+    store.set({ scene: "gameover", paused: true, objective: "Run failed. Reboot and try a new route." });
     store.clearSave();
   }
   victory() {
     sfx.victory();
-    store.set({ scene: "victory", paused: true });
+    store.set({ scene: "victory", paused: true, objective: "Run complete. You escaped the anomaly." });
     store.clearSave();
   }
 }

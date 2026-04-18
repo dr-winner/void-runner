@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { Heart, Zap, Star, Skull, Clock, Layers, MapPin } from "lucide-react";
+import { Heart, Zap, Star, Skull, Clock, Layers, MapPin, Gauge } from "lucide-react";
 import { useGameStore } from "@/phaser/useGameStore";
 import { cn } from "@/lib/utils";
 
@@ -48,6 +48,11 @@ export const HUD = memo(function HUD() {
         <Chip icon={<Layers className="w-3 h-3" />} label={`STAGE ${s.stage}/${s.maxStage}`} active />
         <Chip icon={<Skull className="w-3 h-3" />} label={`${s.kills} KILLS`} />
         <Chip icon={<Clock className="w-3 h-3" />} label={`${mm}:${ss}`} />
+        {s.stageModifierLabel && <Chip icon={<Zap className="w-3 h-3" />} label={s.stageModifierLabel} />}
+      </div>
+
+      <div className="absolute top-12 left-1/2 -translate-x-1/2 max-w-[95vw] px-3 py-1 rounded-full border border-[hsl(var(--neon-blue)/0.4)] bg-background/75 text-[10px] tracking-wide text-[hsl(var(--neon-blue))] text-center">
+        {s.objective}
       </div>
 
       {/* Boss bar */}
@@ -91,6 +96,19 @@ export const HUD = memo(function HUD() {
           s.toast.kind === "info" && "border-[hsl(var(--neon-blue))] text-[hsl(var(--neon-blue))]",
         )}>
           {s.toast.text}
+        </div>
+      )}
+
+      {s.debugOverlay && s.debugStats && (
+        <div className="absolute right-3 bottom-4 rounded-lg border border-border/50 bg-background/80 px-3 py-2 text-[10px] tracking-wide text-foreground/75 space-y-1">
+          <div className="flex items-center gap-1.5 text-[hsl(var(--neon-yellow))]">
+            <Gauge className="w-3 h-3" />
+            DEBUG
+          </div>
+          <div>FPS {s.debugStats.fps.toFixed(1)}</div>
+          <div>Frame {s.debugStats.frameMs.toFixed(1)} ms</div>
+          <div>Enemies {s.debugStats.enemies}</div>
+          <div>Bullets {s.debugStats.bullets}</div>
         </div>
       )}
     </div>

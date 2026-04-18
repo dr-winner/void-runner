@@ -38,6 +38,77 @@ export function enemyScaleForStage(stage: number) {
   };
 }
 
+export interface StageModifier {
+  id: "surge" | "attrition" | "onslaught" | "efficiency" | "none";
+  label: string;
+  description: string;
+  incomingDamageMult: number;
+  energyRegenMult: number;
+  shootCostMult: number;
+  enemySpeedMult: number;
+  enemyCountBonus: number;
+}
+
+const STAGE_MODIFIERS: StageModifier[] = [
+  {
+    id: "surge",
+    label: "ION SURGE",
+    description: "Energy drains faster but firepower spikes.",
+    incomingDamageMult: 1,
+    energyRegenMult: 0.75,
+    shootCostMult: 1.35,
+    enemySpeedMult: 1,
+    enemyCountBonus: 0,
+  },
+  {
+    id: "attrition",
+    label: "ATTRITION FIELD",
+    description: "You take heavier hits in unstable sectors.",
+    incomingDamageMult: 1.2,
+    energyRegenMult: 1,
+    shootCostMult: 1,
+    enemySpeedMult: 1,
+    enemyCountBonus: 0,
+  },
+  {
+    id: "onslaught",
+    label: "HUNTER SWARM",
+    description: "Additional hostiles and faster pursuit.",
+    incomingDamageMult: 1.05,
+    energyRegenMult: 1,
+    shootCostMult: 1,
+    enemySpeedMult: 1.1,
+    enemyCountBonus: 4,
+  },
+  {
+    id: "efficiency",
+    label: "CALM WINDOW",
+    description: "Weapon systems cool efficiently this stage.",
+    incomingDamageMult: 0.95,
+    energyRegenMult: 1.2,
+    shootCostMult: 0.8,
+    enemySpeedMult: 1,
+    enemyCountBonus: -2,
+  },
+];
+
+export function stageModifiersForStage(stage: number): StageModifier {
+  if (stage <= 1 || isBossStage(stage) || isFinalStage(stage)) {
+    return {
+      id: "none",
+      label: "STANDARD CONDITIONS",
+      description: "No stage anomaly detected.",
+      incomingDamageMult: 1,
+      energyRegenMult: 1,
+      shootCostMult: 1,
+      enemySpeedMult: 1,
+      enemyCountBonus: 0,
+    };
+  }
+  const idx = Math.abs(stage + Math.floor(stage / 3)) % STAGE_MODIFIERS.length;
+  return STAGE_MODIFIERS[idx];
+}
+
 // Tailwind-tokenized neon palette mirrored as hex for Phaser
 export const COLORS = {
   bg: 0x05070d,
@@ -70,10 +141,12 @@ export const TILES = {
 export const SOLID = new Set<number>([TILES.WALL, TILES.TREE, TILES.ROCK, TILES.RUIN]);
 
 export type ItemType = "weapon" | "armor" | "consumable_hp" | "consumable_en" | "ship_part" | "scrap";
+export type WeaponArchetype = "pulse" | "scatter" | "lance";
 export interface Item {
   id: string;
   name: string;
   type: ItemType;
   value: number;
   tier?: number;
+  weaponArchetype?: WeaponArchetype;
 }

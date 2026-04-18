@@ -1,4 +1,4 @@
-import { Item } from "./constants";
+import { Item, WeaponArchetype } from "./constants";
 
 export interface PlayerStats {
   level: number;
@@ -17,6 +17,8 @@ export interface PlayerStats {
 export interface PlayerState extends PlayerStats {
   inventory: Item[];
   hotbar: (number | null)[]; // indexes into inventory; length 10
+  weaponArchetype: WeaponArchetype;
+  weaponTier: number;
 }
 
 export const INVENTORY_MAX = 20;
@@ -36,6 +38,8 @@ export function createPlayerState(): PlayerState {
     statPoints: 0,
     inventory: [],
     hotbar: Array(10).fill(null),
+    weaponArchetype: "pulse",
+    weaponTier: 1,
   };
 }
 
@@ -85,9 +89,11 @@ export function useItem(p: PlayerState, idx: number): { used: boolean; msg?: str
   }
   if (it.type === "weapon") {
     p.attack += it.value;
+    p.weaponArchetype = it.weaponArchetype ?? "pulse";
+    p.weaponTier = Math.max(1, it.tier ?? 1);
     p.inventory.splice(idx, 1);
     cleanupHotbar(p, idx);
-    return { used: true, msg: `+${it.value} ATK` };
+    return { used: true, msg: `Weapon equipped: ${weaponArchetypeName(p.weaponArchetype)}` };
   }
   if (it.type === "armor") {
     p.defense += it.value;
@@ -121,7 +127,16 @@ export function craft(p: PlayerState, idxA: number, idxB: number): { ok: boolean
   const b = p.inventory[idxB];
   if (!a || !b || idxA === idxB) return { ok: false, msg: "Pick two items" };
   if (a.type === "weapon" && b.type === "weapon") {
-    const result: Item = { id: "wpn", name: `Pulse Blade Mk${(a.tier ?? 1) + (b.tier ?? 1)}`, type: "weapon", value: a.value + b.value + 1, tier: (a.tier ?? 1) + (b.tier ?? 1) };
+    const tier = (a.tier ?? 1) + (b.tier ?? 1);
+    const archetype = mergeWeaponArchetype(a.weaponArchetype ?? "pulse", b.weaponArchetype ?? "pulse");
+    const result: Item = {
+      id: "wpn",
+      name: `${weaponArchetypeName(archetype)} Mk${tier}`,
+      type: "weapon",
+      value: a.value + b.value + 1,
+      tier,
+      weaponArchetype: archetype,
+    };
     removeTwo(p, idxA, idxB);
     p.inventory.push(result);
     return { ok: true, result, msg: "Forged upgraded weapon" };
@@ -154,4 +169,17 @@ function removeTwo(p: PlayerState, a: number, b: number) {
     if (s > lo) n -= 1;
     return n;
   });
+}
+
+function mergeWeaponArchetype(a: WeaponArchetype, b: WeaponArchetype): WeaponArchetype {
+  if (a === b) return a;
+  if ((a === "scatter" && b === "lance") || (a === "lance" && b === "scatter")) return "pulse";
+  if ((a === "pulse" && b === "scatter") || (a === "scatter" && b === "pulse")) return "scatter";
+  return "lance";
+}
+
+function weaponArchetypeName(kind: WeaponArchetype): string {
+  if (kind === "scatter") return "Scatter Array";
+  if (kind === "lance") return "Lance Driver";
+  return "Pulse Carbine";
 }

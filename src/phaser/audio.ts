@@ -1,4 +1,5 @@
 // Procedural audio via WebAudio (no external assets)
+const AUDIO_DISABLED = true;
 let ctx: AudioContext | null = null;
 let masterGain: GainNode | null = null;
 let musicGain: GainNode | null = null;
@@ -37,7 +38,7 @@ export function getAudioState() {
 }
 
 function tone(freq: number, dur: number, type: OscillatorType = "sine", vol = 0.3) {
-  if (muted) return;
+  if (AUDIO_DISABLED || muted) return;
   const c = ensure();
   const osc = c.createOscillator();
   const g = c.createGain();
@@ -74,19 +75,10 @@ export const sfx = {
 };
 
 export function startAmbient(biome: number) {
+  if (AUDIO_DISABLED) return;
   stopAmbient();
-  const c = ensure();
-  const baseFreqs = biome === 0 ? [55, 82] : biome === 1 ? [49, 73, 98] : [41, 62, 87];
-  baseFreqs.forEach((f, i) => {
-    const osc = c.createOscillator();
-    const g = c.createGain();
-    osc.type = i === 0 ? "sawtooth" : "sine";
-    osc.frequency.value = f;
-    g.gain.value = 0.05 - i * 0.01;
-    osc.connect(g).connect(musicGain!);
-    osc.start();
-    ambientNodes.push({ osc, gain: g });
-  });
+  // Ambient drone disabled: users reported a constant static/buzz.
+  void biome;
 }
 export function stopAmbient() {
   ambientNodes.forEach(({ osc, gain }) => {
@@ -99,6 +91,7 @@ export function stopAmbient() {
 }
 
 export function unlockAudio() {
+  if (AUDIO_DISABLED) return;
   ensure();
   if (ctx!.state === "suspended") ctx!.resume();
 }

@@ -30,6 +30,10 @@ export interface GameSnapshot {
   kills: number;
   runTime: number;
   seed: number;
+  objective: string;
+  stageModifierLabel: string | null;
+  debugOverlay: boolean;
+  debugStats: { fps: number; frameMs: number; enemies: number; bullets: number } | null;
   toast: { id: number; text: string; kind: "info" | "good" | "bad" } | null;
   bossActive: { name: string; hp: number; maxHp: number } | null;
 }
@@ -50,6 +54,10 @@ class Store {
     kills: 0,
     runTime: 0,
     seed: 0,
+    objective: "Find and activate the portal.",
+    stageModifierLabel: null,
+    debugOverlay: false,
+    debugStats: null,
     toast: null,
     bossActive: null,
   };
