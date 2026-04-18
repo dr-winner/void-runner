@@ -95,9 +95,18 @@ export class WorldScene extends Phaser.Scene {
   private fogPendingRebuild = false;
   private lastFogRebuildAt = 0;
   private lastPlayerStoreSync = 0;
+  /** Reused for getWorldPoint to avoid allocations. */
+  private readonly _aimWorld = new Phaser.Math.Vector2();
 
   constructor() {
     super("World");
+  }
+
+  /** Aim toward cursor in world space (Scale.FIT + DOM overlays break positionToCamera reliably). */
+  private aimAngle(): number {
+    const pointer = this.input.activePointer;
+    this.cameras.main.getWorldPoint(pointer.x, pointer.y, this._aimWorld);
+    return Math.atan2(this._aimWorld.y - this.player.y, this._aimWorld.x - this.player.x);
   }
 
   create() {
@@ -447,7 +456,7 @@ export class WorldScene extends Phaser.Scene {
     if (this.time.now - this.lastMelee < 280) return;
     this.lastMelee = this.time.now;
     sfx.shoot();
-    const ang = this.player.rotation;
+    const ang = this.aimAngle();
     const reach = 38;
     const tx = this.player.x + Math.cos(ang) * reach;
     const ty = this.player.y + Math.sin(ang) * reach;
@@ -475,7 +484,7 @@ export class WorldScene extends Phaser.Scene {
     this.state.energy -= 5;
     store.setPlayer(this.state);
     sfx.shoot();
-    const ang = this.player.rotation;
+    const ang = this.aimAngle();
     const speed = 460;
     const b = this.playerBullets.create(this.player.x + Math.cos(ang) * 14, this.player.y + Math.sin(ang) * 14, "bullet_player") as Phaser.Physics.Arcade.Sprite;
     b.setDepth(8);
@@ -555,10 +564,8 @@ export class WorldScene extends Phaser.Scene {
     const len = Math.hypot(vx, vy) || 1;
     this.player.body.setVelocity((vx / len) * this.state.speed, (vy / len) * this.state.speed);
 
-    // face mouse
-    const p = this.input.activePointer;
-    const wp = p.positionToCamera(this.cameras.main) as Phaser.Math.Vector2;
-    this.player.rotation = Math.atan2(wp.y - this.player.y, wp.x - this.player.x);
+    // face mouse (same math as bullets / melee)
+    this.player.rotation = this.aimAngle();
 
     // hotkeys
     if (Phaser.Input.Keyboard.JustDown(k.SPACE)) this.tryMelee();
