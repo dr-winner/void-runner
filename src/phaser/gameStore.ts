@@ -3,6 +3,18 @@ import { BiomeIdx, SAVE_KEY, BIOMES, MAX_STAGE } from "./constants";
 
 type Listener = () => void;
 
+function shallowEqual(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  const ka = Object.keys(a as object);
+  const kb = Object.keys(b as object);
+  if (ka.length !== kb.length) return false;
+  for (const k of ka) {
+    if (!Object.is((a as any)[k], (b as any)[k])) return false;
+  }
+  return true;
+}
+
 export interface GameSnapshot {
   scene: "menu" | "playing" | "gameover" | "victory";
   paused: boolean;
@@ -68,8 +80,28 @@ class Store {
     this.state = { ...this.state, ...patch };
     this.emit();
   }
-  setPlayer(p: PlayerState) {
-    this.state.player = { ...p };
+  // Emits only if any field in the patch actually differs from current state.
+  // Keeps hot-path callers (e.g. per-frame runTime / boss HP updates) from
+  // triggering React re-renders when nothing meaningful changed.
+  setIfChanged(patch: Partial<GameSnapshot>) {
+    let changed = false;
+    for (const k in patch) {
+      const key = k as keyof GameSnapshot;
+      if (!shallowEqual((patch as any)[key], (this.state as any)[key])) {
+        changed = true;
+        break;
+      }
+    }
+    if (!changed) return;
+    this.state = { ...this.state, ...patch };
+    this.emit();
+  }
+  // Produces a new root state reference so useSyncExternalStore detects the
+  // change. Accepts an optional patch so callers can update other fields in
+  // the same emit (e.g. bumping `kills` alongside a stat change after a
+  // kill) without triggering two React renders.
+  setPlayer(p: PlayerState, patch?: Partial<GameSnapshot>) {
+    this.state = { ...this.state, ...patch, player: { ...p } };
     this.emit();
   }
   toast(text: string, kind: "info" | "good" | "bad" = "info") {

@@ -103,14 +103,17 @@ export function generateMap(rng: RNG, biome: BiomeIdx, stage: number): Generated
   const bossStage = isBossStage(safeStage);
   const bossSpawn = bossStage ? take() : null;
 
-  // Scale enemy count with stage, but cap so physics / AI stay within budget.
-  const baseCount = 12;
-  const scaledCount = baseCount + Math.floor(safeStage * 0.45) + biome * 2;
-  const enemyCount = Math.min(open.length, scaledCount, 44);
+  // Scale enemy count with stage. Hard-capped so physics + AI stay cheap —
+  // late-stage difficulty comes from per-enemy HP/damage scaling instead of
+  // raw spawn counts.
+  const MAX_ENEMIES = 55;
+  const baseCount = 10;
+  const scaledCount = baseCount + Math.floor(safeStage * 0.55) + biome * 2;
+  const enemyCount = Math.min(open.length, MAX_ENEMIES, scaledCount);
   const enemySpawns = Array.from({ length: enemyCount }, () => take()).filter(Boolean) as { x: number; y: number }[];
 
   // Scale loot slightly with stage, but cap it.
-  const lootCount = Math.min(open.length, 12 + Math.floor(safeStage / 6));
+  const lootCount = Math.min(open.length, 14, 10 + Math.floor(safeStage / 10));
   const lootSpots = Array.from({ length: lootCount }, () => take()).filter(Boolean) as { x: number; y: number }[];
 
   // Silence unused warning in some configs.

@@ -89,6 +89,10 @@ export class WorldScene extends Phaser.Scene {
   workbenchPos = { x: 0, y: 0 };
   padPos = { x: 0, y: 0 };
   partGroup!: Phaser.Physics.Arcade.Group;
+  padGlow?: Phaser.GameObjects.Arc;
+  padLocked = false;
+  bossCleared = false;
+  transitioning = false;
   shakeUntil = 0;
   private lastRunTimeEmitted = -1;
   private lastBossHudKey = "";
@@ -242,35 +246,62 @@ export class WorldScene extends Phaser.Scene {
   }
 
   drawTerrain() {
-    const p = BIOME_PALETTE[this.biome];
-    const g = this.add.graphics().setDepth(0);
+    // Instead of adding one Image per tile (~4800 GameObjects), stamp all tile
+    // textures into a single RenderTexture. This is drawn as one quad per
+    // frame rather than thousands.
+    const rt = this.add.renderTexture(0, 0, MAP_W * TILE, MAP_H * TILE).setOrigin(0, 0).setDepth(0);
+    const floorKey = `floor_${this.biome}`;
+    const wallKey = `wall_${this.biome}`;
     for (let y = 0; y < MAP_H; y++) {
       for (let x = 0; x < MAP_W; x++) {
         const t = this.map.tiles[y][x];
-        let key = `floor_${this.biome}`;
-        if (t === TILES.WALL) key = `wall_${this.biome}`;
+        const px = x * TILE;
+        const py = y * TILE;
+        let key = floorKey;
+        if (t === TILES.WALL) key = wallKey;
         else if (t === TILES.WATER) key = "water";
         else if (t === TILES.TREE) key = "tree";
         else if (t === TILES.ROCK) key = "rock";
         else if (t === TILES.RUIN) key = "ruin";
         else if (t === TILES.PAD) key = "pad";
         else if (t === TILES.WORKBENCH) key = "workbench";
-        // draw floor under solid decorations
-        if (t === TILES.TREE || t === TILES.ROCK || t === TILES.RUIN || t === TILES.WATER || t === TILES.PAD || t === TILES.WORKBENCH) {
-          this.add.image(x * TILE + TILE / 2, y * TILE + TILE / 2, `floor_${this.biome}`).setDepth(0);
+        // Decorated floors need a floor underneath the decoration.
+        if (
+          t === TILES.TREE || t === TILES.ROCK || t === TILES.RUIN ||
+          t === TILES.WATER || t === TILES.PAD || t === TILES.WORKBENCH
+        ) {
+          rt.drawFrame(floorKey, undefined, px, py);
         }
-        this.add.image(x * TILE + TILE / 2, y * TILE + TILE / 2, key).setDepth(t === TILES.PAD || t === TILES.WORKBENCH ? 1 : 0);
+        rt.drawFrame(key, undefined, px, py);
       }
     }
-    g.destroy();
   }
 
   buildColliders() {
+    // Merge horizontal runs of solid tiles into single static rectangles so we
+    // end up with hundreds of bodies instead of thousands.
     for (let y = 0; y < MAP_H; y++) {
-      for (let x = 0; x < MAP_W; x++) {
-        if (SOLID.has(this.map.tiles[y][x])) {
-          const r = this.walls.create(x * TILE + TILE / 2, y * TILE + TILE / 2, `wall_${this.biome}`);
-          r.setVisible(false).refreshBody();
+      let runStart = -1;
+      for (let x = 0; x <= MAP_W; x++) {
+        const solid = x < MAP_W && SOLID.has(this.map.tiles[y][x]);
+        if (solid && runStart === -1) runStart = x;
+        if ((!solid || x === MAP_W) && runStart !== -1) {
+          const runLen = x - runStart;
+          const rect = this.add.rectangle(
+            runStart * TILE + (runLen * TILE) / 2,
+            y * TILE + TILE / 2,
+            runLen * TILE,
+            TILE,
+            0x000000,
+            0,
+          );
+          rect.setVisible(false);
+          this.physics.add.existing(rect, true);
+          (rect.body as Phaser.Physics.Arcade.StaticBody)
+            .setSize(runLen * TILE, TILE)
+            .updateFromGameObject();
+          this.walls.add(rect);
+          runStart = -1;
         }
       }
     }
@@ -423,13 +454,15 @@ export class WorldScene extends Phaser.Scene {
       this.spawnPickup(e.x, e.y, { ...pick(this.rng, LOOT_TABLE) });
     }
     e.destroy();
-    store.set({ kills: store.state.kills + 1 });
-    if (gainXp(this.state, xp)) {
+    const leveled = gainXp(this.state, xp);
+    if (leveled) {
       sfx.levelup();
-      store.toast(`LEVEL UP! +2 stat points`, "good");
       this.cameras.main.flash(250, 80, 200, 255);
     }
-    store.setPlayer(this.state);
+    // Single emit + fresh state reference for kills and player stats so
+    // useSyncExternalStore actually notifies React.
+    store.setPlayer(this.state, { kills: store.state.kills + 1 });
+    if (leveled) store.toast(`LEVEL UP! +2 stat points`, "good");
     if (wasGuardian) {
       this.victory();
     }
