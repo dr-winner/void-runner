@@ -89,10 +89,6 @@ export class WorldScene extends Phaser.Scene {
   workbenchPos = { x: 0, y: 0 };
   padPos = { x: 0, y: 0 };
   partGroup!: Phaser.Physics.Arcade.Group;
-  padGlow?: Phaser.GameObjects.Arc;
-  padLocked = false;
-  bossCleared = false;
-  transitioning = false;
   shakeUntil = 0;
   private lastRunTimeEmitted = -1;
   private lastBossHudKey = "";
