@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import Phaser from "phaser";
 import { createGame } from "@/phaser/createGame";
 import { store } from "@/phaser/gameStore";
-import { useGameStore } from "@/phaser/useGameStore";
 import { createPlayerState } from "@/phaser/playerState";
 import { HUD } from "@/phaser/ui/HUD";
 import { InventoryPanel } from "@/phaser/ui/InventoryPanel";
@@ -14,7 +13,6 @@ import { MainMenu } from "@/phaser/ui/MainMenu";
 const VoidRunner = () => {
   const mountRef = useRef<HTMLDivElement>(null);
   const gameRef = useRef<Phaser.Game | null>(null);
-  const s = useGameStore();
   const [showMenu, setShowMenu] = useState(true);
   const [hasSave, setHasSave] = useState(false);
 
@@ -65,20 +63,20 @@ const VoidRunner = () => {
   // periodic save
   useEffect(() => {
     const id = setInterval(() => {
-      if (s.scene === "playing") store.save();
+      if (store.state.scene === "playing") store.save();
     }, 5000);
     const beforeUnload = () => store.save();
     window.addEventListener("beforeunload", beforeUnload);
     return () => { clearInterval(id); window.removeEventListener("beforeunload", beforeUnload); };
-  }, [s.scene]);
+  }, []);
 
   return (
-    <main className="min-h-screen w-full flex flex-col items-center justify-center gap-3 px-2 py-4 bg-[radial-gradient(ellipse_at_center,_hsl(var(--neon-purple)/0.08),_transparent_70%)]">
+    <main className="min-h-screen w-full flex flex-col items-center justify-center gap-4 px-3 py-6 bg-[radial-gradient(ellipse_at_center,_hsl(var(--neon-purple)/0.08),_transparent_70%)]">
       <div
-        className="relative rounded-xl overflow-hidden border border-[hsl(var(--neon-blue)/0.45)] shadow-[0_0_80px_hsl(var(--neon-purple)/0.3),0_0_30px_hsl(var(--neon-blue)/0.2)_inset] bg-background"
+        className="relative rounded-2xl overflow-hidden border border-[hsl(var(--neon-blue)/0.4)] shadow-[0_0_80px_hsl(var(--neon-purple)/0.28),0_0_36px_hsl(var(--neon-blue)/0.18)_inset] bg-background ring-1 ring-white/5"
         style={{ width: "min(100%, 1280px)", aspectRatio: "16 / 9" }}
       >
-        <div ref={mountRef} className="w-full h-full" />
+        <div ref={mountRef} className="w-full h-full [&_canvas]:block" />
         {!showMenu && <HUD />}
         <InventoryPanel />
         <CraftingPanel />
@@ -86,9 +84,20 @@ const VoidRunner = () => {
         <EndScreen onRestart={restart} />
         {showMenu && <MainMenu hasSave={hasSave} onContinue={() => startGame(true)} onNew={() => startGame(false)} />}
       </div>
-      <p className="text-[10px] text-foreground/40 font-mono tracking-widest">
-        WASD MOVE · LMB/SPACE MELEE · RMB/F SHOOT · I INVENTORY · E INTERACT · ESC PAUSE · 1-0 HOTBAR
-      </p>
+      {!showMenu && (
+        <div className="w-full max-w-[1280px] rounded-lg border border-border/30 bg-background/40 px-3 py-2.5 font-mono text-[10px] text-foreground/55 sm:text-[11px]">
+          <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 tracking-wide">
+            <span><kbd className="rounded border border-border/60 bg-background/80 px-1.5 py-0.5 text-foreground/80">WASD</kbd> move</span>
+            <span><kbd className="rounded border border-border/60 bg-background/80 px-1.5 py-0.5">LMB</kbd> / <kbd className="rounded border border-border/60 bg-background/80 px-1">Space</kbd> melee</span>
+            <span><kbd className="rounded border border-border/60 bg-background/80 px-1.5 py-0.5">RMB</kbd> / <kbd className="rounded border border-border/60 bg-background/80 px-1">F</kbd> shoot</span>
+            <span><kbd className="rounded border border-border/60 bg-background/80 px-1.5 py-0.5">I</kbd> inventory</span>
+            <span><kbd className="rounded border border-border/60 bg-background/80 px-1.5 py-0.5">E</kbd> interact</span>
+            <span><kbd className="rounded border border-border/60 bg-background/80 px-1.5 py-0.5">C</kbd> stats</span>
+            <span><kbd className="rounded border border-border/60 bg-background/80 px-1.5 py-0.5">Esc</kbd> pause</span>
+            <span><kbd className="rounded border border-border/60 bg-background/80 px-1">1</kbd>–<kbd className="rounded border border-border/60 bg-background/80 px-1">0</kbd> hotbar</span>
+          </div>
+        </div>
+      )}
     </main>
   );
 };

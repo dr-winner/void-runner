@@ -51,6 +51,11 @@ export class WorldScene extends Phaser.Scene {
   padPos = { x: 0, y: 0 };
   partGroup!: Phaser.Physics.Arcade.Group;
   shakeUntil = 0;
+  private lastRunTimeEmitted = -1;
+  private lastBossHudKey = "";
+  private fogPendingRebuild = false;
+  private lastFogRebuildAt = 0;
+  private lastPlayerStoreSync = 0;
 
   constructor() {
     super("World");
@@ -444,20 +449,24 @@ export class WorldScene extends Phaser.Scene {
         }
       }
     }
-    if (dirty) {
-      this.fogTexture.clear();
-      this.fogTexture.fill(0x000000, 0.92);
-      this.fogMask.clear();
-      this.fogMask.fillStyle(0x000000, 1);
-      for (let y = 0; y < MAP_H; y++) {
-        for (let x = 0; x < MAP_W; x++) {
-          if (this.visited[y][x]) this.fogMask.fillRect(x * TILE, y * TILE, TILE, TILE);
-        }
+    if (dirty) this.fogPendingRebuild = true;
+    if (!this.fogPendingRebuild) return;
+    const now = this.time.now;
+    if (now - this.lastFogRebuildAt < 72) return;
+    this.lastFogRebuildAt = now;
+    this.fogPendingRebuild = false;
+
+    this.fogTexture.clear();
+    this.fogTexture.fill(0x000000, 0.92);
+    this.fogMask.clear();
+    this.fogMask.fillStyle(0x000000, 1);
+    for (let y = 0; y < MAP_H; y++) {
+      for (let x = 0; x < MAP_W; x++) {
+        if (this.visited[y][x]) this.fogMask.fillRect(x * TILE, y * TILE, TILE, TILE);
       }
-      // bright window around player
-      this.fogMask.fillCircle(this.player.x, this.player.y, FOG_RADIUS * TILE * 0.95);
-      this.fogTexture.erase(this.fogMask);
     }
+    this.fogMask.fillCircle(this.player.x, this.player.y, FOG_RADIUS * TILE * 0.95);
+    this.fogTexture.erase(this.fogMask);
   }
 
   update(time: number, _delta: number) {
@@ -494,22 +503,35 @@ export class WorldScene extends Phaser.Scene {
 
     // energy regen
     this.state.energy = Math.min(this.state.maxEnergy, this.state.energy + 0.04);
-    if ((time | 0) % 30 === 0) store.setPlayer(this.state);
+    if (time - this.lastPlayerStoreSync > 200) {
+      this.lastPlayerStoreSync = time;
+      store.setPlayer(this.state);
+    }
 
-    // enemy AI
+    // enemy AI (avoid store.emit every frame for boss HUD — React was re-rendering ~60×/s)
     this.enemies.getChildren().forEach((c) => {
-      const e = c as Enemy;
-      e.tickAI(time, this.player, (en) => this.enemyShoot(en));
-      if (e.stats.isBoss) {
-        store.set({ bossActive: { name: e.stats.kind === "guardian" ? "GUARDIAN" : "BIOME WARDEN", hp: e.stats.hp, maxHp: e.stats.maxHp } });
-      }
+      (c as Enemy).tickAI(time, this.player, (en) => this.enemyShoot(en));
     });
-    if (!this.enemies.getChildren().some((c) => (c as Enemy).stats.isBoss)) {
+    const boss = this.enemies.getChildren().find((c) => (c as Enemy).stats.isBoss) as Enemy | undefined;
+    if (boss) {
+      const name = boss.stats.kind === "guardian" ? "GUARDIAN" : "BIOME WARDEN";
+      const key = `${name}:${boss.stats.hp}`;
+      if (key !== this.lastBossHudKey) {
+        this.lastBossHudKey = key;
+        store.set({ bossActive: { name, hp: boss.stats.hp, maxHp: boss.stats.maxHp } });
+      }
+    } else {
+      this.lastBossHudKey = "";
       if (store.state.bossActive) store.set({ bossActive: null });
     }
 
     this.updateFog();
-    store.set({ runTime: Math.floor((time - this.startTime) / 1000) });
+
+    const runSec = Math.floor((time - this.startTime) / 1000);
+    if (runSec !== this.lastRunTimeEmitted) {
+      this.lastRunTimeEmitted = runSec;
+      store.set({ runTime: runSec });
+    }
   }
 
   tryInteract() {

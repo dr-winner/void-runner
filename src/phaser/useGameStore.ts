@@ -5,7 +5,7 @@ export function useGameStore(): GameSnapshot {
   const [s, set] = useState(store.state);
   useEffect(() => {
     const unsub = store.subscribe(() => set({ ...store.state }));
-    return () => { unsub; };
+    return () => unsub();
   }, []);
   return s;
 }

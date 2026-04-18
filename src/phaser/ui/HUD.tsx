@@ -1,9 +1,9 @@
+import { memo } from "react";
 import { Heart, Zap, Star, Skull, Clock, Package, MapPin } from "lucide-react";
 import { useGameStore } from "@/phaser/useGameStore";
-import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 
-export const HUD = () => {
+export const HUD = memo(function HUD() {
   const s = useGameStore();
   const p = s.player;
   if (s.scene !== "playing") return null;
@@ -15,11 +15,18 @@ export const HUD = () => {
 
   return (
     <div className="pointer-events-none absolute inset-0 z-20 font-mono text-foreground">
+      <div
+        className="absolute inset-0 opacity-40 pointer-events-none"
+        style={{
+          background:
+            "radial-gradient(ellipse 85% 70% at 50% 45%, transparent 0%, hsl(var(--background) / 0.15) 100%)",
+        }}
+      />
       {/* Top-left status panel */}
-      <div className="absolute top-3 left-3 w-[320px] space-y-2 rounded-lg border border-[hsl(var(--neon-blue)/0.4)] bg-background/70 backdrop-blur-md p-3 shadow-[0_0_30px_hsl(var(--neon-purple)/0.15)]">
-        <div className="flex items-center justify-between text-[10px] tracking-[0.25em] text-[hsl(var(--neon-blue))]">
-          <span className="flex items-center gap-1.5"><MapPin className="w-3 h-3" />{s.biomeName}</span>
-          <span className="text-foreground/50">SEED · {s.seed.toString(16).slice(0, 6).toUpperCase()}</span>
+      <div className="absolute top-3 left-3 w-[min(92vw,320px)] space-y-2 rounded-xl border border-[hsl(var(--neon-blue)/0.35)] bg-background/75 backdrop-blur-md p-3 shadow-[0_4px_24px_hsl(var(--background)/0.5),0_0_40px_hsl(var(--neon-purple)/0.12)]">
+        <div className="flex items-center justify-between gap-2 text-[10px] tracking-[0.2em] text-[hsl(var(--neon-blue))]">
+          <span className="flex items-center gap-1.5 min-w-0"><MapPin className="w-3 h-3 shrink-0" /><span className="truncate">{s.biomeName}</span></span>
+          <span className="text-foreground/45 shrink-0 tabular-nums">SEED {s.seed.toString(16).slice(0, 6).toUpperCase()}</span>
         </div>
         <Bar icon={<Heart className="w-3.5 h-3.5" />} label={`HP ${Math.ceil(p.hp)}/${p.maxHp}`} pct={hpPct} colorVar="--hp" />
         <Bar icon={<Zap className="w-3.5 h-3.5" />} label={`EN ${Math.ceil(p.energy)}/${p.maxEnergy}`} pct={enPct} colorVar="--energy" />
@@ -37,7 +44,7 @@ export const HUD = () => {
       </div>
 
       {/* Top-center counters */}
-      <div className="absolute top-3 left-1/2 -translate-x-1/2 flex gap-3">
+      <div className="absolute top-3 left-1/2 -translate-x-1/2 flex flex-wrap justify-center gap-2 max-w-[95vw]">
         <Chip icon={<Package className="w-3 h-3" />} label={`${s.shipParts}/${s.totalShipParts} PARTS`} active={s.shipParts > 0} />
         <Chip icon={<Skull className="w-3 h-3" />} label={`${s.kills} KILLS`} />
         <Chip icon={<Clock className="w-3 h-3" />} label={`${mm}:${ss}`} />
@@ -60,15 +67,15 @@ export const HUD = () => {
       )}
 
       {/* Hotbar */}
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1.5 pointer-events-auto">
+      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1 sm:gap-1.5 pointer-events-auto px-1">
         {p.hotbar.map((slot, i) => {
           const it = slot !== null ? p.inventory[slot] : null;
           return (
             <div key={i} className={cn(
-              "relative w-12 h-12 rounded-md border bg-background/70 backdrop-blur flex items-center justify-center text-[10px]",
-              it ? "border-[hsl(var(--neon-blue)/0.6)] shadow-[0_0_10px_hsl(var(--neon-blue)/0.25)]" : "border-border/50",
+              "relative w-10 h-10 sm:w-12 sm:h-12 rounded-lg border bg-background/80 backdrop-blur flex items-center justify-center text-[10px] transition-shadow duration-150",
+              it ? "border-[hsl(var(--neon-blue)/0.55)] shadow-[0_0_12px_hsl(var(--neon-blue)/0.22)]" : "border-border/45 opacity-90",
             )}>
-              <span className="absolute top-0.5 left-1 text-[8px] text-foreground/50">{i === 9 ? 0 : i + 1}</span>
+              <span className="absolute top-0.5 left-1 text-[8px] text-foreground/45 tabular-nums">{i === 9 ? 0 : i + 1}</span>
               {it && <ItemGlyph type={it.type} />}
             </div>
           );
@@ -88,7 +95,7 @@ export const HUD = () => {
       )}
     </div>
   );
-};
+});
 
 const Bar = ({ icon, label, pct, colorVar }: { icon: React.ReactNode; label: string; pct: number; colorVar: string }) => (
   <div className="space-y-0.5">
