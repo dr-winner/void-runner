@@ -28,8 +28,10 @@ const VoidRunner = () => {
         player: createPlayerState(),
         kills: 0,
         runTime: 0,
-        shipParts: 0,
+        stage: 1,
+        stageCleared: false,
         bossActive: null,
+        seed: Math.floor(Math.random() * 1e9),
       });
     }
     setShowMenu(false);

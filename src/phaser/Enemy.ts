@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { TILE, COLORS } from "./constants";
+import { TILE, COLORS, enemyScaleForStage } from "./constants";
 import { sfx } from "./audio";
 
 export type EnemyKind = "crawler" | "spitter" | "drone" | "brute" | "miniboss" | "guardian";
@@ -34,13 +34,22 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   baseTint = 0xffffff;
   declare body: Phaser.Physics.Arcade.Body;
 
-  constructor(scene: Phaser.Scene, x: number, y: number, kind: EnemyKind) {
+  constructor(scene: Phaser.Scene, x: number, y: number, kind: EnemyKind, stage = 1) {
     const preset = ENEMY_PRESETS[kind];
     const tex = `enemy_${kind === "crawler" ? "crawler" : kind === "spitter" ? "spitter" : kind === "drone" ? "drone" : kind === "brute" ? "brute" : kind === "miniboss" ? "miniboss" : "guardian"}`;
     super(scene, x, y, tex);
     scene.add.existing(this);
     scene.physics.add.existing(this);
-    this.stats = { ...preset, hp: preset.maxHp };
+    const m = enemyScaleForStage(stage);
+    const maxHp = Math.ceil(preset.maxHp * m.hp);
+    this.stats = {
+      ...preset,
+      maxHp,
+      hp: maxHp,
+      damage: Math.max(1, Math.ceil(preset.damage * m.damage)),
+      speed: preset.speed * m.speed,
+      xp: Math.max(1, Math.ceil(preset.xp * m.xp)),
+    };
     this.body.setCircle(this.width / 2 - 3, 3, 3);
     this.body.setCollideWorldBounds(true);
     this.hpBar = scene.add.graphics();

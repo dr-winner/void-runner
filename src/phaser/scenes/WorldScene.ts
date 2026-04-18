@@ -1,8 +1,23 @@
 import Phaser from "phaser";
-import { TILE, MAP_W, MAP_H, BIOME_PALETTE, BiomeIdx, BIOMES, TILES, SOLID, COLORS, Item } from "../constants";
+import {
+  TILE,
+  MAP_W,
+  MAP_H,
+  BIOME_PALETTE,
+  BiomeIdx,
+  BIOMES,
+  TILES,
+  SOLID,
+  COLORS,
+  Item,
+  MAX_STAGE,
+  biomeForStage,
+  isBossStage,
+  isFinalStage,
+} from "../constants";
 import { mulberry32, ri, pick, RNG } from "../rng";
 import { generateMap, GeneratedMap } from "../mapgen";
-import { Enemy, EnemyKind, ENEMY_PRESETS } from "../Enemy";
+import { Enemy, EnemyKind } from "../Enemy";
 import { addItem, gainXp, useItem, PlayerState } from "../playerState";
 import { store } from "../gameStore";
 import { sfx, startAmbient, stopAmbient } from "../audio";
@@ -21,13 +36,31 @@ const LOOT_TABLE: Item[] = [
 
 interface PickupSprite extends Phaser.Physics.Arcade.Sprite {
   itemData?: Item;
-  isPart?: boolean;
+}
+
+// Weighted enemy kinds by stage: early stages lean crawler, late stages lean brute/spitter.
+function pickEnemyKind(rng: RNG, stage: number): EnemyKind {
+  const t = Math.min(1, Math.max(0, (stage - 1) / (MAX_STAGE - 1)));
+  const wCrawler = Math.max(0.08, 0.55 - t * 0.4);
+  const wDrone = 0.2 + t * 0.08;
+  const wSpitter = 0.18 + t * 0.17;
+  const wBrute = Math.max(0.07, 0.07 + t * 0.4);
+  const total = wCrawler + wDrone + wSpitter + wBrute;
+  const r = rng() * total;
+  let acc = wCrawler;
+  if (r < acc) return "crawler";
+  acc += wDrone;
+  if (r < acc) return "drone";
+  acc += wSpitter;
+  if (r < acc) return "spitter";
+  return "brute";
 }
 
 export class WorldScene extends Phaser.Scene {
   rng!: RNG;
   map!: GeneratedMap;
   biome: BiomeIdx = 0;
+  stage = 1;
   player!: Phaser.Physics.Arcade.Sprite & { body: Phaser.Physics.Arcade.Body };
   cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   keys!: Record<string, Phaser.Input.Keyboard.Key>;
@@ -44,8 +77,6 @@ export class WorldScene extends Phaser.Scene {
   invincibleUntil = 0;
   startTime = 0;
   damageNumbers!: Phaser.GameObjects.Group;
-  bossSpawned = false;
-  guardianSpawned = false;
   state!: PlayerState;
   workbenchPos = { x: 0, y: 0 };
   padPos = { x: 0, y: 0 };
@@ -63,11 +94,15 @@ export class WorldScene extends Phaser.Scene {
 
   create() {
     const save = store.load();
-    const seed = save?.seed ?? Math.floor(Math.random() * 1e9);
-    const biome: BiomeIdx = (save?.biome ?? 0) as BiomeIdx;
-    this.rng = mulberry32(seed);
+    // Seed each stage deterministically from the run seed + stage so each level is unique.
+    const runSeed = save?.seed ?? store.state.seed ?? Math.floor(Math.random() * 1e9);
+    const stage = Math.max(1, Math.min(MAX_STAGE, save?.stage ?? store.state.stage ?? 1));
+    const biome = biomeForStage(stage);
+    const stageSeed = (runSeed ^ (stage * 2654435761)) >>> 0;
+    this.rng = mulberry32(stageSeed);
     this.biome = biome;
-    this.map = generateMap(this.rng, biome);
+    this.stage = stage;
+    this.map = generateMap(this.rng, biome, stage);
 
     this.physics.world.setBounds(0, 0, MAP_W * TILE, MAP_H * TILE);
     this.cameras.main.setBackgroundColor(BIOME_PALETTE[biome].ambient);
@@ -78,13 +113,18 @@ export class WorldScene extends Phaser.Scene {
     this.buildColliders();
 
     this.state = save?.player ?? store.state.player;
+    this.padLocked = isBossStage(stage);
+    this.bossCleared = !this.padLocked;
+    this.transitioning = false;
+
     store.set({
-      seed,
+      seed: runSeed,
       biome,
       biomeName: BIOMES[biome],
-      shipParts: save?.shipParts ?? 0,
-      kills: save?.kills ?? 0,
-      runTime: save?.runTime ?? 0,
+      stage,
+      stageCleared: false,
+      kills: save?.kills ?? store.state.kills ?? 0,
+      runTime: save?.runTime ?? store.state.runTime ?? 0,
       scene: "playing",
       bossActive: null,
     });
@@ -102,46 +142,48 @@ export class WorldScene extends Phaser.Scene {
     // Groups
     this.enemies = this.add.group({ runChildUpdate: false });
     this.pickups = this.physics.add.group();
+    // Retained for back-compat with UIScene (minimap); always empty now.
     this.partGroup = this.physics.add.group();
     this.playerBullets = this.physics.add.group();
     this.enemyBullets = this.physics.add.group();
     this.damageNumbers = this.add.group();
 
-    // Spawn entities
+    // Spawn regular enemies, distribution shifts with stage.
     this.map.enemySpawns.forEach((p) => {
-      const kinds: EnemyKind[] = ["crawler", "spitter", "drone", "brute"];
-      const weights = [0.4, 0.3, 0.2, 0.1];
-      const r = this.rng();
-      let acc = 0;
-      let kind: EnemyKind = "crawler";
-      for (let i = 0; i < kinds.length; i++) {
-        acc += weights[i];
-        if (r < acc) { kind = kinds[i]; break; }
-      }
+      const kind = pickEnemyKind(this.rng, stage);
       this.spawnEnemy(p.x * TILE + TILE / 2, p.y * TILE + TILE / 2, kind);
     });
-    // Mini-boss for the biome
-    this.spawnEnemy(this.map.miniBoss.x * TILE + TILE / 2, this.map.miniBoss.y * TILE + TILE / 2, "miniboss");
+
+    // Boss on boss-stages: guardian on the final stage, miniboss every 10.
+    if (this.map.bossSpawn) {
+      const bp = this.map.bossSpawn;
+      const kind: EnemyKind = isFinalStage(stage) ? "guardian" : "miniboss";
+      this.spawnEnemy(bp.x * TILE + TILE / 2, bp.y * TILE + TILE / 2, kind);
+      sfx.boss();
+      this.cameras.main.shake(300, 0.008);
+      store.toast(
+        isFinalStage(stage)
+          ? "⚠ FINAL STAGE — The Guardian stirs!"
+          : `⚠ Stage ${stage} — Warden blocks the portal!`,
+        "bad",
+      );
+    }
 
     // Loot
     this.map.lootSpots.forEach((p) => {
       const item = pick(this.rng, LOOT_TABLE);
-      this.spawnPickup(p.x * TILE + TILE / 2, p.y * TILE + TILE / 2, { ...item }, false);
-    });
-    // Ship parts
-    this.map.shipParts.forEach((p) => {
-      this.spawnPickup(p.x * TILE + TILE / 2, p.y * TILE + TILE / 2, { id: "part", name: "Ship Part", type: "ship_part", value: 1 }, true);
+      this.spawnPickup(p.x * TILE + TILE / 2, p.y * TILE + TILE / 2, { ...item });
     });
 
     this.padPos = { x: this.map.pad.x * TILE + TILE / 2, y: this.map.pad.y * TILE + TILE / 2 };
     this.workbenchPos = { x: this.map.workbench.x * TILE + TILE / 2, y: this.map.workbench.y * TILE + TILE / 2 };
+    this.createPadGlow();
 
     // Colliders
     this.physics.add.collider(this.player, this.walls);
     this.physics.add.collider(this.enemies, this.walls);
     this.physics.add.collider(this.enemies, this.enemies);
     this.physics.add.overlap(this.player, this.pickups, this.onPickup, undefined, this);
-    this.physics.add.overlap(this.player, this.partGroup, this.onPartPickup, undefined, this);
     this.physics.add.overlap(this.playerBullets, this.enemies, this.onBulletHitEnemy as any, undefined, this);
     this.physics.add.collider(this.playerBullets, this.walls, (b: any) => b.destroy());
     this.physics.add.overlap(this.enemyBullets, this.player, this.onEnemyBulletHit as any, undefined, this);
@@ -214,33 +256,43 @@ export class WorldScene extends Phaser.Scene {
   }
 
   spawnEnemy(x: number, y: number, kind: EnemyKind) {
-    const e = new Enemy(this, x, y, kind);
+    const e = new Enemy(this, x, y, kind, this.stage);
     this.enemies.add(e);
     return e;
   }
 
-  spawnPickup(x: number, y: number, item: Item, isPart: boolean) {
+  spawnPickup(x: number, y: number, item: Item) {
     const tex =
-      item.type === "ship_part" ? "item_part" :
       item.type === "consumable_hp" ? "item_hp" :
       item.type === "consumable_en" ? "item_en" :
       item.type === "weapon" ? "item_weapon" :
       item.type === "armor" ? "item_armor" : "item_scrap";
     const s = this.physics.add.sprite(x, y, tex) as PickupSprite;
     s.itemData = item;
-    s.isPart = isPart;
     s.setDepth(3);
     (s.body as Phaser.Physics.Arcade.Body).setCircle(8, 1, 1);
     this.tweens.add({ targets: s, y: y - 4, yoyo: true, duration: 800, repeat: -1, ease: "sine.inOut" });
-    if (isPart) {
-      this.partGroup.add(s);
-      // glow ring
-      const ring = this.add.circle(x, y, 14, COLORS.neonGreen, 0.18).setDepth(2);
-      this.tweens.add({ targets: ring, radius: 20, alpha: 0, duration: 1200, repeat: -1 });
-      (s as any).ring = ring;
-    } else {
-      this.pickups.add(s);
-    }
+    this.pickups.add(s);
+  }
+
+  createPadGlow() {
+    const color = this.padLocked ? COLORS.hp : COLORS.neonGreen;
+    this.padGlow = this.add.circle(this.padPos.x, this.padPos.y, 18, color, 0.22).setDepth(2);
+    this.tweens.add({
+      targets: this.padGlow,
+      radius: 28,
+      alpha: 0.05,
+      yoyo: true,
+      duration: 900,
+      repeat: -1,
+      ease: "sine.inOut",
+    });
+  }
+
+  updatePadGlow() {
+    if (!this.padGlow) return;
+    const color = this.padLocked ? COLORS.hp : COLORS.neonGreen;
+    this.padGlow.setFillStyle(color, 0.22);
   }
 
   onPickup(_player: any, pickup: any) {
@@ -256,28 +308,9 @@ export class WorldScene extends Phaser.Scene {
     store.setPlayer(this.state);
   }
 
-  onPartPickup(_player: any, pickup: any) {
-    const ps = pickup as PickupSprite;
-    sfx.pickup();
-    (ps as any).ring?.destroy();
-    ps.destroy();
-    const next = store.state.shipParts + 1;
-    store.set({ shipParts: next });
-    store.toast(`Ship Part ${next}/5 collected`, "good");
-    this.popText(ps.x, ps.y, "SHIP PART", COLORS.neonGreen);
-    this.cameras.main.flash(180, 0, 255, 120);
-    if (next >= 5 && !this.guardianSpawned) {
-      this.spawnGuardian();
-    }
-  }
-
-  spawnGuardian() {
-    this.guardianSpawned = true;
-    sfx.boss();
-    const e = this.spawnEnemy(this.padPos.x + 64, this.padPos.y, "guardian");
-    store.toast("⚠ The Guardian awakens at the escape pod!", "bad");
-    this.cameras.main.shake(400, 0.01);
-    store.set({ bossActive: { name: "GUARDIAN", hp: e.stats.hp, maxHp: e.stats.maxHp } });
+  bossBarName(e: Enemy) {
+    if (e.stats.kind === "guardian") return "GUARDIAN";
+    return `STAGE ${this.stage} WARDEN`;
   }
 
   onBulletHitEnemy(bullet: any, enemy: any) {
@@ -288,7 +321,7 @@ export class WorldScene extends Phaser.Scene {
     if (e.takeDamage(dmg, (e.x - this.player.x) * 0.4, (e.y - this.player.y) * 0.4)) {
       this.killEnemy(e);
     } else if (e.stats.isBoss) {
-      store.set({ bossActive: { name: e.stats.kind === "guardian" ? "GUARDIAN" : "BIOME WARDEN", hp: e.stats.hp, maxHp: e.stats.maxHp } });
+      store.set({ bossActive: { name: this.bossBarName(e), hp: e.stats.hp, maxHp: e.stats.maxHp } });
     }
   }
 
@@ -334,12 +367,19 @@ export class WorldScene extends Phaser.Scene {
     this.time.delayedCall(600, () => emitter.destroy());
     if (isBoss) {
       this.cameras.main.shake(400, 0.02);
-      // Guaranteed loot
-      this.spawnPickup(e.x, e.y, { id: "drop", name: "Pulse Blade", type: "weapon", value: 5, tier: 2 }, false);
-      this.spawnPickup(e.x + 12, e.y, { id: "drop", name: "Med Pack+", type: "consumable_hp", value: 50 }, false);
+      // Guaranteed loot — tier scales with stage.
+      const tier = Math.max(1, Math.ceil(this.stage / 20));
+      this.spawnPickup(e.x, e.y, { id: "drop", name: `Pulse Blade Mk${tier}`, type: "weapon", value: 3 + tier * 2, tier });
+      this.spawnPickup(e.x + 12, e.y, { id: "drop", name: "Med Pack+", type: "consumable_hp", value: 40 + tier * 10 });
       store.set({ bossActive: null });
+      this.padLocked = false;
+      this.bossCleared = true;
+      this.updatePadGlow();
+      if (!wasGuardian) {
+        store.toast("Portal unlocked — step on the pad to advance.", "good");
+      }
     } else if (this.rng() < 0.35) {
-      this.spawnPickup(e.x, e.y, { ...pick(this.rng, LOOT_TABLE) }, false);
+      this.spawnPickup(e.x, e.y, { ...pick(this.rng, LOOT_TABLE) });
     }
     e.destroy();
     store.set({ kills: store.state.kills + 1 });
@@ -388,7 +428,7 @@ export class WorldScene extends Phaser.Scene {
         const dmg = this.state.attack + ri(this.rng, 1, 5);
         this.popText(e.x, e.y - 10, `${dmg}`, COLORS.neonBlue);
         if (e.takeDamage(dmg, (e.x - this.player.x) * 0.6, (e.y - this.player.y) * 0.6)) this.killEnemy(e);
-        else if (e.stats.isBoss) store.set({ bossActive: { name: e.stats.kind === "guardian" ? "GUARDIAN" : "BIOME WARDEN", hp: e.stats.hp, maxHp: e.stats.maxHp } });
+        else if (e.stats.isBoss) store.set({ bossActive: { name: this.bossBarName(e), hp: e.stats.hp, maxHp: e.stats.maxHp } });
       }
     });
   }
@@ -541,14 +581,43 @@ export class WorldScene extends Phaser.Scene {
       return;
     }
     if (Phaser.Math.Distance.Between(this.player.x, this.player.y, this.padPos.x, this.padPos.y) < 40) {
-      if (store.state.shipParts >= 5 && this.guardianSpawned && !this.enemies.getChildren().some((c) => (c as Enemy).stats.kind === "guardian")) {
-        this.victory();
-      } else if (store.state.shipParts < 5) {
-        store.toast(`Need all 5 ship parts (${store.state.shipParts}/5)`, "info");
-      } else if (this.enemies.getChildren().some((c) => (c as Enemy).stats.kind === "guardian")) {
-        store.toast("Defeat the Guardian first!", "bad");
-      }
+      this.tryAdvanceStage();
     }
+  }
+
+  tryAdvanceStage() {
+    if (this.transitioning) return;
+    if (this.padLocked) {
+      store.toast(
+        isFinalStage(this.stage) ? "Defeat the Guardian first!" : "Defeat the Warden to unlock the portal!",
+        "bad",
+      );
+      return;
+    }
+    if (isFinalStage(this.stage) && this.bossCleared) {
+      this.victory();
+      return;
+    }
+    this.advanceStage();
+  }
+
+  advanceStage() {
+    this.transitioning = true;
+    const next = Math.min(MAX_STAGE, this.stage + 1);
+    // Reward for clearing a stage.
+    this.state.hp = Math.min(this.state.maxHp, this.state.hp + Math.ceil(this.state.maxHp * 0.25));
+    this.state.energy = Math.min(this.state.maxEnergy, this.state.energy + Math.ceil(this.state.maxEnergy * 0.5));
+    store.setPlayer(this.state);
+    store.set({ stage: next, stageCleared: true, bossActive: null });
+    store.save();
+    sfx.victory();
+    store.toast(`Stage ${this.stage} cleared → entering Stage ${next}`, "good");
+    this.cameras.main.flash(280, 120, 220, 255);
+    this.cameras.main.fadeOut(400, 0, 0, 0);
+    this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
+      stopAmbient();
+      this.scene.restart();
+    });
   }
 
   useHotbar(i: number) {

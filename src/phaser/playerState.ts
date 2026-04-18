@@ -16,7 +16,6 @@ export interface PlayerStats {
 
 export interface PlayerState extends PlayerStats {
   inventory: Item[];
-  shipParts: number;
   hotbar: (number | null)[]; // indexes into inventory; length 10
 }
 
@@ -36,7 +35,6 @@ export function createPlayerState(): PlayerState {
     speed: 200,
     statPoints: 0,
     inventory: [],
-    shipParts: 0,
     hotbar: Array(10).fill(null),
   };
 }

@@ -59,7 +59,7 @@ export const MainMenu = ({ hasSave, onContinue, onNew }: Props) => {
           VOID<span className="text-[hsl(var(--neon-purple))]"> RUNNER</span>
         </h1>
         <p className="text-xs md:text-sm text-foreground/70 max-w-md mx-auto tracking-wider">
-          Stranded on a hostile world. Collect five ship parts.<br/>Survive three biomes. Escape the Guardian.
+          Stranded on a hostile world. Fight through 100 stages.<br/>Cross three biomes. Defeat the Guardian to escape.
         </p>
         <div className="flex flex-col gap-2 max-w-xs mx-auto pt-4">
           {hasSave && (
