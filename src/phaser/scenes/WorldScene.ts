@@ -418,9 +418,9 @@ export class WorldScene extends Phaser.Scene {
       sfx.levelup();
       this.cameras.main.flash(250, 80, 200, 255);
     }
-    // Single emit for kills + updated player stats avoids two React renders.
-    store.state.kills = store.state.kills + 1;
-    store.setPlayer(this.state);
+    // Single emit + fresh state reference for kills and player stats so
+    // useSyncExternalStore actually notifies React.
+    store.setPlayer(this.state, { kills: store.state.kills + 1 });
     if (leveled) store.toast(`LEVEL UP! +2 stat points`, "good");
     if (wasGuardian) {
       this.victory();

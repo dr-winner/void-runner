@@ -84,8 +84,12 @@ class Store {
     this.state = { ...this.state, ...patch };
     this.emit();
   }
-  setPlayer(p: PlayerState) {
-    this.state.player = { ...p };
+  // Produces a new root state reference so useSyncExternalStore detects the
+  // change. Accepts an optional patch so callers can update other fields in
+  // the same emit (e.g. bumping `kills` alongside a stat change after a
+  // kill) without triggering two React renders.
+  setPlayer(p: PlayerState, patch?: Partial<GameSnapshot>) {
+    this.state = { ...this.state, ...patch, player: { ...p } };
     this.emit();
   }
   toast(text: string, kind: "info" | "good" | "bad" = "info") {
