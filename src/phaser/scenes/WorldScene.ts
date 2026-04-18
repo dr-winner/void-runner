@@ -70,8 +70,16 @@ export class WorldScene extends Phaser.Scene {
   playerBullets!: Phaser.Physics.Arcade.Group;
   enemyBullets!: Phaser.Physics.Arcade.Group;
   fogTexture!: Phaser.GameObjects.RenderTexture;
-  fogMask!: Phaser.GameObjects.Graphics;
+  /** Accumulated revealed tiles — avoids scanning MAP_W×MAP_H every fog rebuild. */
+  fogVisitedG!: Phaser.GameObjects.Graphics;
+  fogCircle!: Phaser.GameObjects.Graphics;
   visited!: boolean[][];
+  /** For minimap: only cells revealed at least once (grows, max ~MAP_W*MAP_H). */
+  visitedList: { x: number; y: number }[] = [];
+  padLocked = false;
+  bossCleared = false;
+  transitioning = false;
+  padGlow!: Phaser.GameObjects.Arc;
   lastMelee = 0;
   lastShoot = 0;
   invincibleUntil = 0;
@@ -182,7 +190,7 @@ export class WorldScene extends Phaser.Scene {
     // Colliders
     this.physics.add.collider(this.player, this.walls);
     this.physics.add.collider(this.enemies, this.walls);
-    this.physics.add.collider(this.enemies, this.enemies);
+    // Skip enemy–enemy colliders: O(n²) Arcade checks were a major hitch with 40+ mobs.
     this.physics.add.overlap(this.player, this.pickups, this.onPickup, undefined, this);
     this.physics.add.overlap(this.playerBullets, this.enemies, this.onBulletHitEnemy as any, undefined, this);
     this.physics.add.collider(this.playerBullets, this.walls, (b: any) => b.destroy());
@@ -194,7 +202,8 @@ export class WorldScene extends Phaser.Scene {
     this.visited = Array.from({ length: MAP_H }, () => Array(MAP_W).fill(false));
     this.fogTexture = this.add.renderTexture(0, 0, MAP_W * TILE, MAP_H * TILE).setDepth(50).setOrigin(0, 0);
     this.fogTexture.fill(0x000000, 0.95);
-    this.fogMask = this.make.graphics({ x: 0, y: 0 }, false);
+    this.fogVisitedG = this.make.graphics({ x: 0, y: 0 }, false);
+    this.fogCircle = this.make.graphics({ x: 0, y: 0 }, false);
 
     // Input
     this.cursors = this.input.keyboard!.createCursorKeys();
@@ -485,7 +494,10 @@ export class WorldScene extends Phaser.Scene {
         if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) continue;
         if (!this.visited[y][x]) {
           this.visited[y][x] = true;
+          this.visitedList.push({ x, y });
           dirty = true;
+          this.fogVisitedG.fillStyle(0xffffff, 1);
+          this.fogVisitedG.fillRect(x * TILE, y * TILE, TILE, TILE);
         }
       }
     }
@@ -498,15 +510,11 @@ export class WorldScene extends Phaser.Scene {
 
     this.fogTexture.clear();
     this.fogTexture.fill(0x000000, 0.92);
-    this.fogMask.clear();
-    this.fogMask.fillStyle(0x000000, 1);
-    for (let y = 0; y < MAP_H; y++) {
-      for (let x = 0; x < MAP_W; x++) {
-        if (this.visited[y][x]) this.fogMask.fillRect(x * TILE, y * TILE, TILE, TILE);
-      }
-    }
-    this.fogMask.fillCircle(this.player.x, this.player.y, FOG_RADIUS * TILE * 0.95);
-    this.fogTexture.erase(this.fogMask);
+    this.fogTexture.erase(this.fogVisitedG);
+    this.fogCircle.clear();
+    this.fogCircle.fillStyle(0xffffff, 1);
+    this.fogCircle.fillCircle(this.player.x, this.player.y, FOG_RADIUS * TILE * 0.95);
+    this.fogTexture.erase(this.fogCircle);
   }
 
   update(time: number, _delta: number) {
@@ -554,7 +562,7 @@ export class WorldScene extends Phaser.Scene {
     });
     const boss = this.enemies.getChildren().find((c) => (c as Enemy).stats.isBoss) as Enemy | undefined;
     if (boss) {
-      const name = boss.stats.kind === "guardian" ? "GUARDIAN" : "BIOME WARDEN";
+      const name = this.bossBarName(boss);
       const key = `${name}:${boss.stats.hp}`;
       if (key !== this.lastBossHudKey) {
         this.lastBossHudKey = key;

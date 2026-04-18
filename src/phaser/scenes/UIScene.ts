@@ -30,7 +30,7 @@ export class UIScene extends Phaser.Scene {
   }
 
   update(time: number) {
-    if (time - this.lastDraw < 250) return;
+    if (time - this.lastDraw < 380) return;
     this.lastDraw = time;
     const world = this.scene.get("World") as any;
     if (!world?.map || !world.player) return;
@@ -41,9 +41,10 @@ export class UIScene extends Phaser.Scene {
     this.rt.fill(0x05070d, 1);
     const g = this.make.graphics({ x: 0, y: 0 }, false);
     const p = BIOME_PALETTE[world.biome as 0 | 1 | 2];
-    for (let yy = 0; yy < MAP_H; yy++) {
-      for (let xx = 0; xx < MAP_W; xx++) {
-        if (!world.visited[yy][xx]) continue;
+    const list = world.visitedList as { x: number; y: number }[] | undefined;
+    if (list?.length) {
+      for (let i = 0; i < list.length; i++) {
+        const { x: xx, y: yy } = list[i];
         const t = world.map.tiles[yy][xx];
         let color = p.floor;
         if (t === 1) color = p.wall;
@@ -51,6 +52,19 @@ export class UIScene extends Phaser.Scene {
         else if (t === 7) color = 0xffd633;
         g.fillStyle(color, 1);
         g.fillRect(xx * TILE * sx, yy * TILE * sy, Math.max(1, TILE * sx), Math.max(1, TILE * sy));
+      }
+    } else {
+      for (let yy = 0; yy < MAP_H; yy++) {
+        for (let xx = 0; xx < MAP_W; xx++) {
+          if (!world.visited[yy][xx]) continue;
+          const t = world.map.tiles[yy][xx];
+          let color = p.floor;
+          if (t === 1) color = p.wall;
+          else if (t === 6) color = 0x33d9ff;
+          else if (t === 7) color = 0xffd633;
+          g.fillStyle(color, 1);
+          g.fillRect(xx * TILE * sx, yy * TILE * sy, Math.max(1, TILE * sx), Math.max(1, TILE * sy));
+        }
       }
     }
     // ship parts

@@ -30,6 +30,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   stats: EnemyStats;
   hpBar: Phaser.GameObjects.Graphics;
   lastAttack = 0;
+  lastHpBarDraw = 0;
   flashUntil = 0;
   baseTint = 0xffffff;
   declare body: Phaser.Physics.Arcade.Body;
@@ -62,7 +63,16 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.setTint(0xffffff);
     if (knockX || knockY) this.body.setVelocity(this.body.velocity.x + knockX, this.body.velocity.y + knockY);
     sfx.hit();
+    this.lastHpBarDraw = 0;
+    this.updateBar();
     return this.stats.hp <= 0;
+  }
+
+  /** Avoid redrawing HP bar every physics frame (was a major cost with many enemies). */
+  updateBarIfNeeded(time: number) {
+    if (time - this.lastHpBarDraw < 90) return;
+    this.lastHpBarDraw = time;
+    this.updateBar();
   }
 
   updateBar() {
@@ -100,7 +110,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       } else {
         this.body.setVelocity(this.body.velocity.x * 0.95, this.body.velocity.y * 0.95);
       }
-      this.updateBar();
+      this.updateBarIfNeeded(time);
       return;
     }
 
@@ -117,6 +127,6 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       this.body.setVelocity((dx / dist) * this.stats.speed, (dy / dist) * this.stats.speed);
     }
 
-    this.updateBar();
+    this.updateBarIfNeeded(time);
   }
 }

@@ -45,7 +45,7 @@ export const HUD = memo(function HUD() {
 
       {/* Top-center counters */}
       <div className="absolute top-3 left-1/2 -translate-x-1/2 flex flex-wrap justify-center gap-2 max-w-[95vw]">
-        <Chip icon={<Package className="w-3 h-3" />} label={`${s.shipParts}/${s.totalShipParts} PARTS`} active={s.shipParts > 0} />
+        <Chip icon={<Package className="w-3 h-3" />} label={`STAGE ${s.stage}/${s.maxStage}`} active={s.stage > 1} />
         <Chip icon={<Skull className="w-3 h-3" />} label={`${s.kills} KILLS`} />
         <Chip icon={<Clock className="w-3 h-3" />} label={`${mm}:${ss}`} />
       </div>

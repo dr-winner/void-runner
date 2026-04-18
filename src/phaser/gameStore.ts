@@ -44,13 +44,25 @@ class Store {
   private listeners = new Set<Listener>();
   private toastId = 0;
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Coalesce many store updates in one frame into a single React reconciliation. */
+  private emitPending = false;
 
   subscribe(l: Listener) {
     this.listeners.add(l);
     return () => this.listeners.delete(l);
   }
   emit() {
-    this.listeners.forEach((l) => l());
+    if (this.emitPending) return;
+    this.emitPending = true;
+    const flush = () => {
+      this.emitPending = false;
+      this.listeners.forEach((l) => l());
+    };
+    if (typeof requestAnimationFrame !== "undefined") {
+      requestAnimationFrame(flush);
+    } else {
+      queueMicrotask(flush);
+    }
   }
   set(patch: Partial<GameSnapshot>) {
     this.state = { ...this.state, ...patch };
