@@ -1,0 +1,15 @@
+---
+description: Commit and push to GitHub after completing code changes
+alwaysApply: true
+---
+
+# Git: commit and push after edits
+
+When you finish a coherent set of file changes for the user’s request (not after every single keystroke, but before ending your turn):
+
+1. Run `git status` and stage the intended files with `git add`.
+2. Commit with a short, clear message in imperative mood (e.g. `fix: reduce HUD rerenders`).
+3. If `git remote -v` shows an `origin`, run `git push` on the current branch (usually `main`). Use `git_write` and `network` permissions as needed.
+4. If there is no `origin`, tell the user to create a GitHub repo and run `git remote add origin <url>` then `git push -u origin main`, and do not claim the push succeeded.
+
+Repeat this after future edits in this repo unless the user opts out.
