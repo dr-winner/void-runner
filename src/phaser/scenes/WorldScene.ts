@@ -193,10 +193,12 @@ export class WorldScene extends Phaser.Scene {
     // Skip enemy–enemy colliders: O(n²) Arcade checks were a major hitch with 40+ mobs.
     this.physics.add.overlap(this.player, this.pickups, this.onPickup, undefined, this);
     this.physics.add.overlap(this.playerBullets, this.enemies, this.onBulletHitEnemy as any, undefined, this);
-    this.physics.add.collider(this.playerBullets, this.walls, (b: any) => b.destroy());
+    // Do NOT collider(bullets, walls): one static body per tile → each bullet × ~O(wall bodies) per frame = freeze.
+    // Wall hits are resolved in resolveBulletWallHits() after physics (tile lookup).
     this.physics.add.overlap(this.enemyBullets, this.player, this.onEnemyBulletHit as any, undefined, this);
-    this.physics.add.collider(this.enemyBullets, this.walls, (b: any) => b.destroy());
     this.physics.add.overlap(this.player, this.enemies, this.onEnemyTouch as any, undefined, this);
+
+    this.events.on(Phaser.Scenes.Events.POST_UPDATE, this.resolveBulletWallHits, this);
 
     // Fog of war
     this.visited = Array.from({ length: MAP_H }, () => Array(MAP_W).fill(false));
@@ -222,6 +224,7 @@ export class WorldScene extends Phaser.Scene {
     this.time.addEvent({ delay: 5000, loop: true, callback: () => store.save() });
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.events.off(Phaser.Scenes.Events.POST_UPDATE, this.resolveBulletWallHits, this);
       stopAmbient();
     });
 
@@ -320,6 +323,26 @@ export class WorldScene extends Phaser.Scene {
   bossBarName(e: Enemy) {
     if (e.stats.kind === "guardian") return "GUARDIAN";
     return `STAGE ${this.stage} WARDEN`;
+  }
+
+  /** After physics: destroy bullets that entered a solid tile (O(bullets), not O(bullets × walls)). */
+  private resolveBulletWallHits() {
+    if (store.state.paused || store.state.scene !== "playing") return;
+    const hitWall = (b: Phaser.GameObjects.GameObject) => {
+      const s = b as Phaser.Physics.Arcade.Sprite;
+      if (!s.active || !s.body) return;
+      const tx = Math.floor(s.x / TILE);
+      const ty = Math.floor(s.y / TILE);
+      if (tx < 0 || ty < 0 || tx >= MAP_W || ty >= MAP_H) {
+        s.destroy();
+        return;
+      }
+      if (SOLID.has(this.map.tiles[ty][tx])) s.destroy();
+    };
+    const pb = this.playerBullets.getChildren();
+    for (let i = pb.length - 1; i >= 0; i--) hitWall(pb[i]);
+    const eb = this.enemyBullets.getChildren();
+    for (let i = eb.length - 1; i >= 0; i--) hitWall(eb[i]);
   }
 
   onBulletHitEnemy(bullet: any, enemy: any) {
