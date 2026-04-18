@@ -32,6 +32,9 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   lastAttack = 0;
   flashUntil = 0;
   baseTint = 0xffffff;
+  private lastHpBarPct = 1;
+  private barDirty = false;
+  private tintOn = false;
   declare body: Phaser.Physics.Arcade.Body;
 
   constructor(scene: Phaser.Scene, x: number, y: number, kind: EnemyKind, stage = 1) {
@@ -61,23 +64,37 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.flashUntil = this.scene.time.now + 100;
     this.setTint(0xffffff);
     if (knockX || knockY) this.body.setVelocity(this.body.velocity.x + knockX, this.body.velocity.y + knockY);
+    this.barDirty = true;
     sfx.hit();
     return this.stats.hp <= 0;
   }
 
   updateBar() {
-    this.hpBar.clear();
-    if (this.stats.hp >= this.stats.maxHp) return;
+    const pct = Math.max(0, this.stats.hp / this.stats.maxHp);
+    if (pct >= 1) {
+      // No bar to show — clear once when we transition to full HP and bail.
+      if (this.lastHpBarPct < 1) {
+        this.hpBar.clear();
+        this.lastHpBarPct = 1;
+      }
+      return;
+    }
+    // Graphics lives at enemy position; fill coords are relative so moving
+    // the enemy only requires a cheap transform, not a re-draw.
+    this.hpBar.setPosition(this.x, this.y - this.height / 2 - 6);
+    if (!this.barDirty && pct === this.lastHpBarPct) return;
+    this.barDirty = false;
+    this.lastHpBarPct = pct;
     const w = this.stats.isBoss ? 36 : 22;
     const h = 3;
-    const x = this.x - w / 2;
-    const y = this.y - this.height / 2 - 6;
+    const x = -w / 2;
+    this.hpBar.clear();
     this.hpBar.fillStyle(0x000000, 0.7);
-    this.hpBar.fillRect(x - 1, y - 1, w + 2, h + 2);
+    this.hpBar.fillRect(x - 1, -1, w + 2, h + 2);
     this.hpBar.fillStyle(0x331111, 1);
-    this.hpBar.fillRect(x, y, w, h);
+    this.hpBar.fillRect(x, 0, w, h);
     this.hpBar.fillStyle(this.stats.isBoss ? 0xff3355 : 0xff7755, 1);
-    this.hpBar.fillRect(x, y, w * Math.max(0, this.stats.hp / this.stats.maxHp), h);
+    this.hpBar.fillRect(x, 0, w * pct, h);
   }
 
   destroy(fromScene?: boolean): void {
@@ -86,14 +103,26 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   }
 
   tickAI(time: number, target: Phaser.GameObjects.Sprite, onShoot: (e: Enemy) => void) {
-    if (time < this.flashUntil) this.setTint(0xffaaaa);
-    else this.clearTint();
+    // Only toggle tint on state change — setTint/clearTint dirty GPU state.
+    const wantTint = time < this.flashUntil;
+    if (wantTint !== this.tintOn) {
+      if (wantTint) this.setTint(0xffaaaa);
+      else this.clearTint();
+      this.tintOn = wantTint;
+    }
 
     const dx = target.x - this.x;
     const dy = target.y - this.y;
-    const dist = Math.hypot(dx, dy);
+    const distSq = dx * dx + dy * dy;
+    const rangeSq = this.stats.range * this.stats.range;
 
-    if (dist > this.stats.range && !this.stats.isBoss) {
+    // Far-off non-boss enemies sleep: no physics velocity churn, no bar updates.
+    if (distSq > rangeSq && !this.stats.isBoss) {
+      const SLEEP_SQ = 900 * 900; // ~28 tiles; well off-screen
+      if (distSq > SLEEP_SQ) {
+        if (this.body.velocity.x || this.body.velocity.y) this.body.setVelocity(0, 0);
+        return;
+      }
       if (Math.random() < 0.01) {
         const a = Math.random() * Math.PI * 2;
         this.body.setVelocity(Math.cos(a) * 20, Math.sin(a) * 20);
@@ -104,6 +133,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       return;
     }
 
+    const dist = Math.sqrt(distSq) || 1;
     if (this.stats.kind === "spitter" || this.stats.isBoss) {
       const ideal = this.stats.attackRange * 0.7;
       const dir = dist < ideal ? -1 : 1;
